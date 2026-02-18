@@ -24,11 +24,7 @@
 #include <fcntl.h>
 #include <time.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "notify.h"

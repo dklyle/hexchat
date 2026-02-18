@@ -1,19 +1,5 @@
 plugindir = join_paths(get_option('libdir'), 'hexchat/plugins')
 
-if host_machine.system() == 'windows'
-  if get_option('with-exec')
-    subdir('exec')
-  endif
-
-  if get_option('with-upd')
-    subdir('upd')
-  endif
-
-  if get_option('with-winamp')
-    subdir('winamp')
-  endif
-endif
-
 if get_option('with-checksum')
   subdir('checksum')
 endif

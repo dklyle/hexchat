@@ -31,14 +31,9 @@
 #define WANTARPA
 #include "inet.h"
 
-#ifdef WIN32
-#include <winbase.h>
-#include <io.h>
-#else
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "fe.h"
@@ -409,19 +404,6 @@ server_connected (server * serv)
 	fe_server_event (serv, FE_SE_CONNECT, 0);
 }
 
-#ifdef WIN32
-
-static gboolean
-server_close_pipe (int *pipefd)	/* see comments below */
-{
-	close (pipefd[0]);	/* close WRITE end first to cause an EOF on READ */
-	close (pipefd[1]);	/* in giowin32, and end that thread. */
-	g_free (pipefd);
-	return FALSE;
-}
-
-#endif
-
 static void
 server_stopconnecting (server * serv)
 {
@@ -437,24 +419,12 @@ server_stopconnecting (server * serv)
 		serv->joindelay_tag = 0;
 	}
 
-#ifndef WIN32
 	/* kill the child process trying to connect */
 	kill (serv->childpid, SIGKILL);
 	waitpid (serv->childpid, NULL, 0);
 
 	close (serv->childwrite);
 	close (serv->childread);
-#else
-	PostThreadMessage (serv->childpid, WM_QUIT, 0, 0);
-
-	{
-		/* if we close the pipe now, giowin32 will crash. */
-		int *pipefd = g_new (int, 2);
-		pipefd[0] = serv->childwrite;
-		pipefd[1] = serv->childread;
-		g_idle_add ((GSourceFunc)server_close_pipe, pipefd);
-	}
-#endif
 
 #ifdef USE_OPENSSL
 	if (serv->ssl_do_connect_tag)
@@ -733,11 +703,7 @@ auto_reconnect (server *serv, int send_quit, int err)
 	if (del < 1000)
 		del = 500;				  /* so it doesn't block the gui */
 
-#ifndef WIN32
 	if (err == -1 || err == 0 || err == ECONNRESET || err == ETIMEDOUT)
-#else
-	if (err == -1 || err == 0 || err == WSAECONNRESET || err == WSAETIMEDOUT)
-#endif
 		serv->reconnect_away = serv->is_away;
 
 	/* is this server in a reconnect delay? remove it! */
@@ -1528,12 +1494,6 @@ xit:
 		net_store_destroy (ns_proxy);
 
 	/* no need to free ip/real_hostname, this process is exiting */
-#ifdef WIN32
-	/* under win32 we use a thread -> shared memory, must free! */
-	g_free (proxy_ip);
-	g_free (ip);
-	g_free (real_hostname);
-#endif
 
 	return 0;
 	/* cppcheck-suppress memleak */
@@ -1619,11 +1579,7 @@ server_connect (server *serv, char *hostname, int port, int no_login)
 	fe_set_away (serv);
 	server_flush_queue (serv);
 
-#ifdef WIN32
-	if (_pipe (read_des, 4096, _O_BINARY) < 0)
-#else
 	if (pipe (read_des) < 0)
-#endif
 		return;
 #ifdef __EMX__ /* os/2 */
 	setmode (read_des[0], O_BINARY);
@@ -1637,11 +1593,6 @@ server_connect (server *serv, char *hostname, int port, int no_login)
 	serv->proxy_sok4 = -1;
 	serv->proxy_sok6 = -1;
 
-#ifdef WIN32
-	CloseHandle (CreateThread (NULL, 0,
-										(LPTHREAD_START_ROUTINE)server_child,
-										serv, 0, (DWORD *)&pid));
-#else
 #ifdef LOOKUPD
 	/* CL: net_resolve calls rand() when LOOKUPD is set, so prepare a different
 	 * seed for each child. This method gives a bigger variation in seed values
@@ -1660,13 +1611,8 @@ server_connect (server *serv, char *hostname, int port, int no_login)
 		server_child (serv);
 		_exit (0);
 	}
-#endif
 	serv->childpid = pid;
-#ifdef WIN32
-	serv->iotag = fe_input_add (serv->childread, FIA_READ|FIA_FD, server_read_child,
-#else
 	serv->iotag = fe_input_add (serv->childread, FIA_READ, server_read_child,
-#endif
 										 serv);
 }
 

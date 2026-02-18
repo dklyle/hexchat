@@ -43,18 +43,7 @@ hexchat_gtk_cflags = []
 
 hexchat_gtk_ldflags = []
 
-if host_machine.system() == 'windows'
-  hexchat_gtk_sources += 'notifications/notification-windows.c'
-
-  # TODO: mingw doesn't have these headers or libs
-  # add_languages('cpp')
-  # shared_module('hcnotifications-winrt',
-  #  sources: 'notifications/notification-winrt.cpp'
-  #)
-
-else
-  hexchat_gtk_sources += 'notifications/notification-freedesktop.c'
-endif
+hexchat_gtk_sources += 'notifications/notification-freedesktop.c'
 
 iso_codes = dependency('iso-codes', required: false)
 if iso_codes.found()
@@ -75,10 +64,6 @@ resources = gnome.compile_resources('resources',
   c_name: 'hexchat',
   extra_args: ['--manual-register']
 )
-
-if host_machine.system() == 'windows'
-  hexchat_gtk_ldflags += '-Wl,-e,mainCRTStartup'
-endif
 
 executable('hexchat',
   sources:  resources + hexchat_gtk_sources,

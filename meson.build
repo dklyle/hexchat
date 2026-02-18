@@ -21,12 +21,8 @@ libcanberra_dep = dependency('libcanberra', version: '>= 0.22',
 dbus_glib_dep = dependency('dbus-glib-1', required: get_option('dbus'))
 
 global_deps = []
-if cc.get_id() == 'msvc'
-  libssl_dep = cc.find_library('libssl')
-else
-  libssl_dep = dependency('openssl', version: '>= 0.9.8',
-                          required: get_option('tls'))
-endif
+libssl_dep = dependency('openssl', version: '>= 0.9.8',
+                        required: get_option('tls'))
 
 config_h = configuration_data()
 config_h.set_quoted('PACKAGE_VERSION', meson.project_version())
@@ -85,15 +81,6 @@ endif
 configure_file(output: 'config.h', configuration: config_h)
 config_h_include = include_directories('.')
 
-if host_machine.system() == 'windows'
-  add_project_arguments(
-    '-DWIN32',
-    '-DNTDDI_VERSION=NTDDI_WIN7',
-    '-D_WIN32_WINNT=_WIN32_WINNT_WIN7',
-     language: 'c')
-endif
-
-
 global_cflags = []
 test_cflags = [
   '-funsigned-char',
@@ -125,10 +112,6 @@ if get_option('buildtype') != 'plain'
      }
      ''', args: '-fstack-protector-all')
     global_cflags += '-fstack-protector-strong'
-
-    if host_machine.system() == 'windows'
-      global_deps += cc.find_library('ssp')
-    endif
   endif
 endif
 add_project_arguments(global_cflags, language: 'c')
@@ -138,12 +121,7 @@ global_ldflags = []
 test_ldflags = [
   '-Wl,-z,relro',
   '-Wl,-z,now',
-  # mingw
-  '-Wl,--nxcompat',
 ]
-if not (host_machine.system() == 'windows' and get_option('debug'))
- test_ldflags += '-Wl,--dynamicbase'
-endif
 foreach ldflag : test_ldflags
   if meson.version().version_compare('>= 0.46.0')
     has_arg = cc.has_link_argument(ldflag)
@@ -161,14 +139,12 @@ subdir('src')
 if get_option('plugin')
   subdir('plugins')
 endif
-if cc.get_id() != 'msvc'
-  subdir('data')
-  subdir('po') # FIXME: build xgettext
+subdir('data')
+subdir('po') # FIXME: build xgettext
 
-  meson.add_install_script('meson_post_install.py',
-    '@0@'.format(get_option('theme-manager'))
-  )
-endif
+meson.add_install_script('meson_post_install.py',
+  '@0@'.format(get_option('theme-manager'))
+)
 
 if meson.version().version_compare('>= 0.53.0')
   summary({

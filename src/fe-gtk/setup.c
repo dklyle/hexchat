@@ -39,9 +39,6 @@
 #include "plugin-tray.h"
 #include "notifications/notification-backend.h"
 
-#ifdef WIN32
-#include "../common/fe.h"
-#endif
 #include "sexy-spell-entry.h"
 
 GtkStyle *create_input_style (GtkStyle *);
@@ -85,75 +82,10 @@ typedef struct
 	int extra;
 } setting;
 
-#ifdef WIN32
-static const char *const langsmenu[] =
-{
-	N_("Afrikaans"),
-	N_("Albanian"),
-	N_("Amharic"),
-	N_("Asturian"),
-	N_("Azerbaijani"),
-	N_("Basque"),
-	N_("Belarusian"),
-	N_("Bulgarian"),
-	N_("Catalan"),
-	N_("Chinese (Simplified)"),
-	N_("Chinese (Traditional)"),
-	N_("Czech"),
-	N_("Danish"),
-	N_("Dutch"),
-	N_("English (British)"),
-	N_("English"),
-	N_("Estonian"),
-	N_("Finnish"),
-	N_("French"),
-	N_("Galician"),
-	N_("German"),
-	N_("Greek"),
-	N_("Gujarati"),
-	N_("Hindi"),
-	N_("Hungarian"),
-	N_("Indonesian"),
-	N_("Italian"),
-	N_("Japanese"),
-	N_("Kannada"),
-	N_("Kinyarwanda"),
-	N_("Korean"),
-	N_("Latvian"),
-	N_("Lithuanian"),
-	N_("Macedonian"),
-	N_("Malay"),
-	N_("Malayalam"),
-	N_("Norwegian (Bokmal)"),
-	N_("Norwegian (Nynorsk)"),
-	N_("Polish"),
-	N_("Portuguese"),
-	N_("Portuguese (Brazilian)"),
-	N_("Punjabi"),
-	N_("Russian"),
-	N_("Serbian"),
-	N_("Slovak"),
-	N_("Slovenian"),
-	N_("Spanish"),
-	N_("Swedish"),
-	N_("Thai"),
-	N_("Turkish"),
-	N_("Ukrainian"),
-	N_("Vietnamese"),
-	N_("Walloon"),
-	NULL
-};
-#endif
-
 static const setting appearance_settings[] =
 {
 	{ST_HEADER,	N_("General"),0,0,0},
-#ifdef WIN32
-	{ST_MENU,   N_("Language:"), P_OFFINTNL(hex_gui_lang), 0, langsmenu, 0},
-	{ST_EFONT,  N_("Main font:"), P_OFFSETNL(hex_text_font_main), 0, 0, sizeof prefs.hex_text_font_main},
-#else
 	{ST_EFONT,  N_("Font:"), P_OFFSETNL(hex_text_font), 0, 0, sizeof prefs.hex_text_font},
-#endif
 
 	{ST_HEADER,	N_("Text Box"),0,0,0},
 	{ST_TOGGLE, N_("Colored nick names"), P_OFFINTNL(hex_text_color_nicks), N_("Give each person on IRC a different color"),0,0},
@@ -167,11 +99,7 @@ static const setting appearance_settings[] =
 	{ST_HEADER,	N_("Timestamps"),0,0,0},
 	{ST_TOGGLE, N_("Enable timestamps"), P_OFFINTNL(hex_stamp_text),0,0,1},
 	{ST_ENTRY,  N_("Timestamp format:"), P_OFFSETNL(hex_stamp_text_format),
-#ifdef WIN32
-					N_("See the strftime MSDN article for details."),0,sizeof prefs.hex_stamp_text_format},
-#else
 					N_("See the strftime manpage for details."),0,sizeof prefs.hex_stamp_text_format},
-#endif
 
 	{ST_HEADER,	N_("Title Bar"),0,0,0},
 	{ST_TOGGLE, N_("Show channel modes"), P_OFFINTNL(hex_gui_win_modes),0,0,0},
@@ -197,11 +125,7 @@ static const setting inputbox_settings[] =
 	{ST_TOGGLE, N_("Show user mode icon in nick box"), P_OFFINTNL(hex_gui_input_icon),0,0,0},
 	{ST_TOGGLE, N_("Spell checking"), P_OFFINTNL(hex_gui_input_spell),0,0,1},
 	{ST_ENTRY,	N_("Dictionaries to use:"), P_OFFSETNL(hex_text_spell_langs),0,0,sizeof prefs.hex_text_spell_langs},
-#ifdef WIN32
-	{ST_LABEL,	N_("Use language codes (as in \"%LOCALAPPDATA%\\enchant\\myspell\\dicts\").\nSeparate multiple entries with commas.")},
-#else
 	{ST_LABEL,	N_("Use language codes. Separate multiple entries with commas.")},
-#endif
 
 	{ST_HEADER, N_("Nick Completion"),0,0,0},
 	{ST_ENTRY,	N_("Nick completion suffix:"), P_OFFSETNL(hex_completion_suffix),0,0,sizeof prefs.hex_completion_suffix},
@@ -405,14 +329,10 @@ static const setting alert_settings[] =
 	{ST_3OGGLE, N_("Show notifications on:"), 0, 0, (void *)balloonlist, 0},
 	{ST_3OGGLE, N_("Blink tray icon on:"), 0, 0, (void *)trayblinklist, 0},
 	{ST_3OGGLE, N_("Blink task bar on:"), 0, 0, (void *)taskbarlist, 0},
-#ifdef WIN32
-	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play the \"Instant Message Notification\" system sound upon the selected events"), (void *)beeplist, 0},
-#else
 #ifdef USE_LIBCANBERRA
 	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play \"message-new-instant\" from the freedesktop.org sound theme upon the selected events"), (void *)beeplist, 0},
 #else
 	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play a GTK beep upon the selected events"), (void *)beeplist, 0},
-#endif
 #endif
 
 	{ST_TOGGLE,	N_("Omit alerts when marked as being away"), P_OFFINTNL(hex_away_omit_alerts), 0, 0, 0},
@@ -442,21 +362,11 @@ static const setting alert_settings_nonotifications[] =
 
 	{ST_ALERTHEAD},
 	{ST_3OGGLE, N_("Blink tray icon on:"), 0, 0, (void *)trayblinklist, 0},
-#ifdef HAVE_GTK_MAC
-	{ST_3OGGLE, N_("Bounce dock icon on:"), 0, 0, (void *)taskbarlist, 0},
-#else
-#ifndef __APPLE__
 	{ST_3OGGLE, N_("Blink task bar on:"), 0, 0, (void *)taskbarlist, 0},
-#endif
-#endif
-#ifdef WIN32
-	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play the \"Instant Message Notification\" system sound upon the selected events"), (void *)beeplist, 0},
-#else
 #ifdef USE_LIBCANBERRA
 	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play \"message-new-instant\" from the freedesktop.org sound theme upon the selected events"), (void *)beeplist, 0},
 #else
 	{ST_3OGGLE, N_("Make a beep sound on:"), 0, N_("Play a GTK beep upon the selected events"), (void *)beeplist, 0},
-#endif
 #endif
 
 	{ST_TOGGLE,	N_("Omit alerts when marked as being away"), P_OFFINTNL(hex_away_omit_alerts), 0, 0, 0},
@@ -570,9 +480,6 @@ static const setting advanced_settings[] =
 
 	{ST_HEADER,	N_("Miscellaneous"), 0, 0, 0},
 	{ST_ENTRY,  N_("Real name:"), P_OFFSETNL(hex_irc_real_name), 0, 0, sizeof prefs.hex_irc_real_name},
-#ifdef WIN32
-	{ST_ENTRY,  N_("Alternative fonts:"), P_OFFSETNL(hex_text_font_alternative), N_("Separate multiple entries with commas without spaces before or after."), 0, sizeof prefs.hex_text_font_alternative},
-#endif
 	{ST_TOGGLE,	N_("Display lists in compact mode"), P_OFFINTNL(hex_gui_compact), N_("Use less spacing between user list/channel tree rows."), 0, 0},
 	{ST_TOGGLE,	N_("Use server time if supported"), P_OFFINTNL(hex_irc_cap_server_time), N_("Display timestamps obtained from server if it supports the time-server extension."), 0, 0},
 	{ST_TOGGLE,	N_("Automatically reconnect to servers on disconnect"), P_OFFINTNL(hex_net_auto_reconnect), 0, 0, 1},
@@ -595,11 +502,7 @@ static const setting logging_settings[] =
 	{ST_HEADER,	N_("Timestamps"),0,0,0},
 	{ST_TOGGLE,	N_("Insert timestamps in logs"), P_OFFINTNL(hex_stamp_log), 0, 0, 1},
 	{ST_ENTRY,	N_("Log timestamp format:"), P_OFFSETNL(hex_stamp_log_format), 0, 0, sizeof prefs.hex_stamp_log_format},
-#ifdef WIN32
-	{ST_LABEL,	N_("See the strftime MSDN article for details.")},
-#else
 	{ST_LABEL,	N_("See the strftime manpage for details.")},
-#endif
 
 	{ST_HEADER,	N_("URLs"),0,0,0},
 	{ST_TOGGLE,	N_("Enable logging of URLs to disk"), P_OFFINTNL(hex_url_logging), 0, 0, 0},
@@ -907,11 +810,9 @@ setup_create_hscale (GtkWidget *table, int row, const setting *set)
 	gtk_table_attach (GTK_TABLE (table), wid, 3, 6, row, row + 1,
 							GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-#ifndef WIN32 /* Windows always supports this */
 	/* Only used for transparency currently */
 	if (!gtk_widget_is_composited (current_sess->gui->window))
 		gtk_widget_set_sensitive (wid, FALSE);
-#endif
 }
 
 
@@ -1100,13 +1001,8 @@ setup_browsefile_cb (GtkWidget *button, GtkWidget *entry)
 	char *filter;
 	int filter_type;
 
-#ifdef WIN32
-	filter = "*png;*.tiff;*.gif;*.jpeg;*.jpg";
-	filter_type = FRF_EXTENSIONS;
-#else
 	filter = "image/*";
 	filter_type = FRF_MIMETYPES;
-#endif
 	gtkutil_file_req (GTK_WINDOW (setup_window), _("Select an Image File"), setup_filereq_cb,
 					entry, NULL, filter, filter_type|FRF_RECENTLYUSED|FRF_MODAL);
 }
@@ -1710,13 +1606,8 @@ setup_snd_browse_cb (GtkWidget *button, GtkEntry *entry)
 	char *sounds_dir = g_build_filename (get_xdir (), HEXCHAT_SOUND_DIR, NULL);
 	char *filter = NULL;
 	int filter_type;
-#ifdef WIN32 /* win32 only supports wav, others could support anything */
-	filter = "*.wav";
-	filter_type = FRF_EXTENSIONS;
-#else
 	filter = "audio/*";
 	filter_type = FRF_MIMETYPES;
-#endif
 
 	gtkutil_file_req (GTK_WINDOW (setup_window), _("Select a sound file"), setup_snd_filereq_cb, entry,
 						sounds_dir, filter, FRF_MODAL|FRF_FILTERISINITIAL|filter_type);
@@ -2087,11 +1978,7 @@ unslash (char *dir)
 	if (dir[0])
 	{
 		int len = strlen (dir) - 1;
-#ifdef WIN32
-		if (dir[len] == '/' || dir[len] == '\\')
-#else
 		if (dir[len] == '/')
-#endif
 			dir[len] = 0;
 	}
 }
@@ -2158,11 +2045,6 @@ setup_apply_real (int new_pix, int do_ulist, int do_layout, int do_identd)
 static void
 setup_apply (struct hexchatprefs *pr)
 {
-#ifdef WIN32
-	PangoFontDescription *old_desc;
-	PangoFontDescription *new_desc;
-	char buffer[4 * FONTNAMELEN + 1];
-#endif
 	int new_pix = FALSE;
 	int noapply = FALSE;
 	int do_ulist = FALSE;
@@ -2174,10 +2056,6 @@ setup_apply (struct hexchatprefs *pr)
 
 #define DIFF(a) (pr->a != prefs.a)
 
-#ifdef WIN32
-	if (DIFF (hex_gui_lang))
-		noapply = TRUE;
-#endif
 	if (DIFF (hex_gui_compact))
 		noapply = TRUE;
 	if (DIFF (hex_gui_input_icon))
@@ -2238,22 +2116,6 @@ setup_apply (struct hexchatprefs *pr)
 
 	memcpy (&prefs, pr, sizeof (prefs));
 
-#ifdef WIN32
-	/* merge hex_font_main and hex_font_alternative into hex_font_normal */
-	old_desc = pango_font_description_from_string (prefs.hex_text_font_main);
-	sprintf (buffer, "%s,%s", pango_font_description_get_family (old_desc), prefs.hex_text_font_alternative);
-	new_desc = pango_font_description_from_string (buffer);
-	pango_font_description_set_weight (new_desc, pango_font_description_get_weight (old_desc));
-	pango_font_description_set_style (new_desc, pango_font_description_get_style (old_desc));
-	pango_font_description_set_size (new_desc, pango_font_description_get_size (old_desc));
-	sprintf (prefs.hex_text_font, "%s", pango_font_description_to_string (new_desc));
-
-	/* FIXME this is not required after pango_font_description_from_string()
-	g_free (old_desc);
-	g_free (new_desc);
-	*/
-#endif
-
 	if (prefs.hex_irc_real_name[0] == 0)
 	{
 		fe_message (_("The Real name option cannot be left blank. Falling back to \"realname\"."), FE_MSG_WARN);
@@ -2266,7 +2128,6 @@ setup_apply (struct hexchatprefs *pr)
 		fe_message (_("Some settings were changed that require a"
 						" restart to take full effect."), FE_MSG_WARN);
 
-#ifndef WIN32
 	if (prefs.hex_dcc_auto_recv == 2) /* Auto */
 	{
 		if (!strcmp ((char *)g_get_home_dir (), prefs.hex_dcc_dir))
@@ -2277,7 +2138,6 @@ setup_apply (struct hexchatprefs *pr)
 							 "Someone could send you a .bash_profile"), FE_MSG_WARN);
 		}
 	}
-#endif
 }
 
 static void

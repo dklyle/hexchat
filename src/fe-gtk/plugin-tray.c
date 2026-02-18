@@ -31,9 +31,7 @@
 #include "menu.h"
 #include "gtkutil.h"
 
-#ifndef WIN32
 #include <unistd.h>
-#endif
 
 typedef enum	/* current icon status */
 {
@@ -64,10 +62,6 @@ typedef GdkPixbuf* TrayIcon;
 static GtkStatusIcon *sticon;
 static gint flash_tag;
 static TrayStatus tray_status;
-#ifdef WIN32
-static guint tray_menu_timer;
-static gint64 tray_menu_inactivetime;
-#endif
 static hexchat_plugin *ph;
 
 static TrayIcon custom_icon1;
@@ -466,7 +460,6 @@ tray_make_item (GtkWidget *menu, char *label, void *callback, void *userdata)
 	return item;
 }
 
-#ifndef WIN32
 static void
 tray_toggle_cb (GtkCheckMenuItem *item, unsigned int *setting)
 {
@@ -478,45 +471,13 @@ blink_item (unsigned int *setting, GtkWidget *menu, char *label)
 {
 	menu_toggle_item (label, menu, tray_toggle_cb, setting, *setting);
 }
-#endif
 
 static void
 tray_menu_destroy (GtkWidget *menu, gpointer userdata)
 {
 	gtk_widget_destroy (menu);
 	g_object_unref (menu);
-#ifdef WIN32
-	g_source_remove (tray_menu_timer);
-#endif
 }
-
-#ifdef WIN32
-static gboolean
-tray_menu_enter_cb (GtkWidget *menu)
-{
-	tray_menu_inactivetime = 0;
-	return FALSE;
-}
-
-static gboolean
-tray_menu_left_cb (GtkWidget *menu)
-{
-	tray_menu_inactivetime = g_get_real_time ();
-	return FALSE;
-}
-
-static gboolean
-tray_check_hide (GtkWidget *menu)
-{
-	if (tray_menu_inactivetime && g_get_real_time () - tray_menu_inactivetime  >= 2000000)
-	{
-		tray_menu_destroy (menu, NULL);
-		return G_SOURCE_REMOVE;
-	}
-
-	return G_SOURCE_CONTINUE;
-}
-#endif
 
 static void
 tray_menu_settings (GtkWidget * wid, gpointer none)
@@ -551,7 +512,6 @@ tray_menu_cb (GtkWidget *widget, guint button, guint time, gpointer userdata)
 		tray_make_item (menu, _("_Hide Window"), tray_menu_restore_cb, NULL);
 	tray_make_item (menu, NULL, tray_menu_quit_cb, NULL);
 
-#ifndef WIN32 /* submenus are buggy on win32 */
 	submenu = mg_submenu (menu, _("_Blink on"));
 	blink_item (&prefs.hex_input_tray_chans, submenu, _("Channel Message"));
 	blink_item (&prefs.hex_input_tray_priv, submenu, _("Private Message"));
@@ -559,9 +519,6 @@ tray_menu_cb (GtkWidget *widget, guint button, guint time, gpointer userdata)
 	/*blink_item (BIT_FILEOFFER, submenu, _("File Offer"));*/
 
 	submenu = mg_submenu (menu, _("_Change status"));
-#else /* so show away/back in main tray menu */
-	submenu = menu;
-#endif
 
 	away_status = tray_find_away_status ();
 	item = tray_make_item (submenu, _("_Away"), tray_foreach_server, "away");
@@ -583,14 +540,6 @@ tray_menu_cb (GtkWidget *widget, guint button, guint time, gpointer userdata)
 	g_object_unref (menu);
 	g_signal_connect (G_OBJECT (menu), "selection-done",
 							G_CALLBACK (tray_menu_destroy), NULL);
-#ifdef WIN32
-	g_signal_connect (G_OBJECT (menu), "leave-notify-event",
-							G_CALLBACK (tray_menu_left_cb), NULL);
-	g_signal_connect (G_OBJECT (menu), "enter-notify-event",
-							G_CALLBACK (tray_menu_enter_cb), NULL);
-
-	tray_menu_timer = g_timeout_add (500, (GSourceFunc)tray_check_hide, menu);
-#endif
 
 	gtk_menu_popup (GTK_MENU (menu), NULL, NULL, NULL,
 						 userdata, button, time);
@@ -809,8 +758,5 @@ tray_plugin_init (hexchat_plugin *plugin_handle, char **plugin_name,
 int
 tray_plugin_deinit (hexchat_plugin *plugin_handle)
 {
-#ifdef WIN32
-	tray_cleanup ();
-#endif
 	return 1;
 }

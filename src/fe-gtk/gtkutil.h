@@ -45,8 +45,4 @@ gboolean gtkutil_treeview_get_selected_iter (GtkTreeView *view, GtkTreeIter *ite
 gboolean gtkutil_treeview_get_selected (GtkTreeView *view, GtkTreeIter *iter_ret, ...);
 gboolean gtkutil_tray_icon_supported (GtkWindow *window);
 
-#if defined (WIN32) || defined (__APPLE__)
-gboolean gtkutil_find_font (const char *fontname);
-#endif
-
 #endif

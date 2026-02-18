@@ -24,14 +24,8 @@
 #ifdef HAVE_STRINGS_H
 #include <strings.h>
 #endif
-#ifdef WIN32
-#include <io.h>
-#define STDIN_FILENO 0
-#define STDOUT_FILENO 1
-#else
 #include <unistd.h>
 #include <sys/time.h>
-#endif
 #include <sys/types.h>
 #include <ctype.h>
 #include <glib-object.h>
@@ -134,8 +128,6 @@ timecat (char *buf, time_t stamp)
 	return strlen (stampbuf);
 }
 
-/* Windows doesn't handle ANSI codes in cmd.exe, need to not display them */
-#ifndef WIN32
 /*                               0  1  2  3  4  5  6  7   8   9  10  11  12  13  14 15 */
 static const short colconv[] = { 0, 7, 4, 2, 1, 3, 5, 11, 13, 12, 6, 16, 14, 15, 10, 7 };
 
@@ -306,102 +298,6 @@ fe_print_text (struct session *sess, char *text, time_t stamp,
 	write (STDOUT_FILENO, newtext, j);
 	g_free (newtext);
 }
-#else
-/* The win32 version for cmd.exe */
-void
-fe_print_text (struct session *sess, char *text, time_t stamp,
-			   gboolean no_activity)
-{
-	int dotime = FALSE;
-	int comma, k, i = 0, j = 0, len = strlen (text);
-
-	unsigned char *newtext = g_malloc (len + 1024);
-
-	if (prefs.hex_stamp_text)
-	{
-		newtext[0] = 0;
-		j += timecat (newtext, stamp);
-	}
-	while (i < len)
-	{
-		if (dotime && text[i] != 0)
-		{
-			dotime = FALSE;
-			newtext[j] = 0;
-			j += timecat (newtext, stamp);
-		}
-		switch (text[i])
-		{
-		case 3:
-			i++;
-			if (!isdigit (text[i]))
-			{
-				goto endloop;
-			}
-			k = 0;
-			comma = FALSE;
-			while (i < len)
-			{
-				if (text[i] >= '0' && text[i] <= '9' && k < 2)
-				{
-					k++;
-				} else
-				{
-					switch (text[i])
-					{
-					case ',':
-						comma = TRUE;
-						break;
-					default:
-						goto endloop;
-					}
-					k = 0;
-
-				}
-				i++;
-			}
-			break;
-		/* don't actually want hidden text */
-		case '\010':				  /* hidden */
-		case '\026':				  /* REVERSE */
-		case '\037':				  /* underline */
-		case '\002':				  /* bold */
-		case '\017':				  /* reset all */
-			break;
-		case '\007':
-			if (!prefs.hex_input_filter_beep)
-			{
-				newtext[j] = text[i];
-				j++;
-			}
-			break;
-		case '\t':
-			newtext[j] = ' ';
-			j++;
-			break;
-		case '\n':
-			newtext[j] = '\r';
-			j++;
-			if (prefs.hex_stamp_text)
-				dotime = TRUE;
-		default:
-			newtext[j] = text[i];
-			j++;
-		}
-		i++;
-		endloop:
-			;
-	}
-
-	/* make sure last character is a new line */
-	if (text[i-1] != '\n')
-		newtext[j++] = '\n';
-
-	newtext[j] = 0;
-	write (STDOUT_FILENO, newtext, j);
-	g_free (newtext);
-}
-#endif
 
 void
 fe_timeout_remove (int tag)
@@ -433,14 +329,7 @@ fe_input_add (int sok, int flags, void *func, void *data)
 	int tag, type = 0;
 	GIOChannel *channel;
 
-#ifdef G_OS_WIN32
-	if (flags & FIA_FD)
-		channel = g_io_channel_win32_new_fd (sok);
-	else
-		channel = g_io_channel_win32_new_socket (sok);
-#else
 	channel = g_io_channel_unix_new (sok);
-#endif
 
 	if (flags & FIA_READ)
 		type |= G_IO_IN | G_IO_HUP | G_IO_ERR;
@@ -512,19 +401,7 @@ fe_args (int argc, char *argv[])
 		printf (PACKAGE_NAME" was build without plugin support\n");
 		return 1;
 #else
-#ifdef WIN32
-		/* see the chdir() below */
-		char *sl, *exe = g_strdup (argv[0]);
-		sl = strrchr (exe, '\\');
-		if (sl)
-		{
-			*sl = 0;
-			printf ("%s\\plugins\n", exe);
-		}
-		g_free (exe);
-#else
 		printf ("%s\n", HEXCHATLIBDIR);
-#endif
 #endif
 		return 0;
 	}
@@ -566,11 +443,7 @@ fe_main (void)
 	main_loop = g_main_loop_new(NULL, FALSE);
 
 	/* Keyboard Entry Setup */
-#ifdef G_OS_WIN32
-	keyboard_input = g_io_channel_win32_new_fd(STDIN_FILENO);
-#else
 	keyboard_input = g_io_channel_unix_new(STDIN_FILENO);
-#endif
 
 	g_io_add_watch(keyboard_input, G_IO_IN, handle_line, NULL);
 

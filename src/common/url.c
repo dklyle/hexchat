@@ -664,13 +664,8 @@ re_channel (void)
 }
 
 /*	PATH description --- */
-#ifdef WIN32
-/* Windows path can be .\ ..\ or C: D: etc */
-#define FS_PATH "^(\\.{1,2}\\\\|[a-z]:).*"
-#else
 /* Linux path can be / or ./ or ../ etc */
 #define FS_PATH "^(/|\\./|\\.\\./).*"
-#endif
 
 static const GRegex *
 re_path (void)

@@ -21,12 +21,7 @@
 #include <fcntl.h>
 #include <string.h>
 
-#ifdef WIN32
-#include <windows.h>
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "fe-gtk.h"
 
@@ -904,17 +899,6 @@ menu_fullscreen_toggle (GtkWidget *wid, gpointer ud)
 	else
 	{
 		gtk_window_unfullscreen (GTK_WINDOW(parent_window));
-
-#ifdef WIN32
-		if (!prefs.hex_gui_win_state) /* not maximized */
-		{
-			/* other window managers seem to handle this */
-			gtk_window_resize (GTK_WINDOW (parent_window),
-				prefs.hex_gui_win_width, prefs.hex_gui_win_height);
-			gtk_window_move (GTK_WINDOW (parent_window),
-				prefs.hex_gui_win_left, prefs.hex_gui_win_top);
-		}
-#endif
 	}
 }
 
@@ -1744,15 +1728,7 @@ menu_about (GtkWidget *wid, gpointer sess)
 					"along with this program. If not, see <http://www.gnu.org/licenses/>";
 
 	g_snprintf  (comment, sizeof(comment), ""
-#ifdef WIN32
-				"Portable Mode: %s\n"
-				"Build Type: x%d\n"
-#endif
 				"OS: %s",
-#ifdef WIN32
-				(portable_mode () ? "Yes" : "No"),
-				get_cpu_arch (),
-#endif
 				get_sys_str (0));
 
 	gtk_about_dialog_set_program_name (dialog, _(DISPLAY_NAME));

@@ -28,10 +28,8 @@
 #define WANTARPA
 #include "inet.h"
 
-#ifndef WIN32
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 #include <time.h>
 #include <signal.h>
@@ -1489,8 +1487,6 @@ cmd_echo (struct session *sess, char *tbuf, char *word[], char *word_eol[])
 	return TRUE;
 }
 
-#ifndef WIN32
-
 static void
 exec_check_process (struct session *sess)
 {
@@ -1934,8 +1930,6 @@ cmd_exec (struct session *sess, char *tbuf, char *word[], char *word_eol[])
 	}
 	return FALSE;
 }
-
-#endif
 
 #if 0
 /* export config stub */
@@ -4005,7 +3999,6 @@ const struct commands xc_cmds[] = {
 	{"DNS", cmd_dns, 0, 0, 1, N_("DNS <nick|host|ip>, Resolves an IP or hostname")},
 	{"DOAT", cmd_doat, 0, 0, 1, N_("DOAT <channel,list,/network> <command>")},
 	{"ECHO", cmd_echo, 0, 0, 1, N_("ECHO <text>, Prints text locally")},
-#ifndef WIN32
 	{"EXEC", cmd_exec, 0, 0, 1,
 	 N_("EXEC [-o] <command>, runs the command. If -o flag is used then output is sent to current channel, else is printed to current text box")},
 #ifndef __EMX__
@@ -4016,7 +4009,6 @@ const struct commands xc_cmds[] = {
 #ifndef __EMX__
 	{"EXECSTOP", cmd_execs, 0, 0, 1, N_("EXECSTOP, sends the process SIGSTOP")},
 	{"EXECWRITE", cmd_execw, 0, 0, 1, N_("EXECWRITE [-q|--], sends data to the processes stdin; use -q flag to quiet/suppress output at text box; use -- flag to stop interpreting arguments as flags, needed if -q itself would occur as data")},
-#endif
 #endif
 #if 0
 	{"EXPORTCONF", cmd_exportconf, 0, 0, 1, N_("EXPORTCONF, exports HexChat settings")},

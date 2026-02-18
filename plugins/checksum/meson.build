@@ -3,5 +3,4 @@ shared_module('checksum', 'checksum.c',
   install: true,
   install_dir: plugindir,
   name_prefix: '',
-  vs_module_defs: 'checksum.def',
 )

@@ -25,9 +25,7 @@
 #include <stdio.h>
 #include <glib.h>
 
-#ifndef WIN32
 #include <unistd.h>
-#endif
 
 #define WANTSOCKET
 #define WANTARPA

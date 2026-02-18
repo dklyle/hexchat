@@ -53,10 +53,6 @@
 #include "sexy-spell-entry.h"
 #include "gtkutil.h"
 
-#ifdef G_OS_WIN32
-#include <windows.h>
-#endif
-
 #define GUI_SPACING (3)
 #define GUI_BORDER (0)
 
@@ -2411,11 +2407,7 @@ mg_create_meters (session_gui *gui, GtkWidget *parent_box)
 	if (prefs.hex_gui_lagometer & 1)
 	{
 		gui->lagometer = wid = gtk_progress_bar_new ();
-#ifdef WIN32
-		gtk_widget_set_size_request (wid, 1, 10);
-#else
 		gtk_widget_set_size_request (wid, 1, 8);
-#endif
 
 		wid = gtk_event_box_new ();
 		gtk_container_add (GTK_CONTAINER (wid), gui->lagometer);
@@ -2430,11 +2422,7 @@ mg_create_meters (session_gui *gui, GtkWidget *parent_box)
 	if (prefs.hex_gui_throttlemeter & 1)
 	{
 		gui->throttlemeter = wid = gtk_progress_bar_new ();
-#ifdef WIN32
-		gtk_widget_set_size_request (wid, 1, 10);
-#else
 		gtk_widget_set_size_request (wid, 1, 8);
-#endif
 
 		wid = gtk_event_box_new ();
 		gtk_container_add (GTK_CONTAINER (wid), gui->throttlemeter);
@@ -3229,29 +3217,11 @@ mg_tabwindow_de_cb (GtkWidget *widget, GdkEvent *event, gpointer user_data)
 	return TRUE;
 }
 
-#ifdef G_OS_WIN32
-static GdkFilterReturn
-mg_time_change (GdkXEvent *xevent, GdkEvent *event, gpointer data)
-{
-	MSG *msg = (MSG*)xevent;
-
-	if (msg->message == WM_TIMECHANGE)
-	{
-		_tzset();
-	}
-
-	return GDK_FILTER_CONTINUE;
-}
-#endif
-
 static void
 mg_create_tabwindow (session *sess)
 {
 	GtkWidget *win;
 	GtkWidget *table;
-#ifdef G_OS_WIN32
-	GdkWindow *parent_win;
-#endif
 
 	win = gtkutil_window_new ("HexChat", NULL, prefs.hex_gui_win_width,
 									  prefs.hex_gui_win_height, 0);
@@ -3316,11 +3286,6 @@ mg_create_tabwindow (session *sess)
 	mg_place_userlist_and_chanview (sess->gui);
 
 	gtk_widget_show (win);
-
-#ifdef G_OS_WIN32
-	parent_win = gtk_widget_get_window (win);
-	gdk_window_add_filter (parent_win, mg_time_change, NULL);
-#endif
 }
 
 void

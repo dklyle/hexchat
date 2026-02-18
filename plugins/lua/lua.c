@@ -29,9 +29,7 @@
 #include <glib.h>
 #include <gmodule.h>
 
-#ifndef G_OS_WIN32
 #include <pwd.h>
-#endif
 
 #include <hexchat-plugin.h>
 
@@ -1208,7 +1206,6 @@ static char const *expand_path(char const *path)
 {
 	if(g_path_is_absolute(path))
 		return path;
-#ifndef G_OS_WIN32
 	if(path[0] == '~')
 	{
 		if(!path[1] || path[1] == '/')
@@ -1243,7 +1240,6 @@ static char const *expand_path(char const *path)
 		}
 	}
 	else
-#endif
 	{
 		g_free(expand_buffer);
 		expand_buffer = g_build_filename(hexchat_get_info(ph, "configdir"), "addons", path, NULL);

@@ -27,9 +27,6 @@
 #include "fe-gtk.h"
 
 #include <gdk/gdkkeysyms.h>
-#if defined (WIN32) || defined (__APPLE__)
-#include <pango/pangocairo.h>
-#endif
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
@@ -44,11 +41,7 @@
 #include "gtkutil.h"
 #include "pixmaps.h"
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 /* gtkutil.c, just some gtk wrappers */
 
@@ -581,12 +574,10 @@ show_and_unfocus (GtkWidget * wid)
 void
 gtkutil_set_icon (GtkWidget *win)
 {
-#ifndef WIN32
 	/* FIXME: Magically breaks icon rendering in most
 	 * (sub)windows, but OFC only on Windows. GTK <3
 	 */
 	gtk_window_set_icon (GTK_WINDOW (win), pix_hexchat);
-#endif
 }
 
 extern GtkWidget *parent_window;	/* maingui.c */
@@ -598,9 +589,6 @@ gtkutil_window_new (char *title, char *role, int width, int height, int flags)
 
 	win = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtkutil_set_icon (win);
-#ifdef WIN32
-	gtk_window_set_wmclass (GTK_WINDOW (win), "HexChat", "hexchat");
-#endif
 	gtk_window_set_title (GTK_WINDOW (win), title);
 	gtk_window_set_default_size (GTK_WINDOW (win), width, height);
 	gtk_window_set_role (GTK_WINDOW (win), role);
@@ -774,34 +762,3 @@ gtkutil_tray_icon_supported (GtkWindow *window)
 	return (tray_window != None);
 #endif
 }
-
-#if defined (WIN32) || defined (__APPLE__)
-gboolean
-gtkutil_find_font (const char *fontname)
-{
-	int i;
-	int n_families;
-	const char *family_name;
-	PangoFontMap *fontmap;
-	PangoFontFamily *family;
-	PangoFontFamily **families;
-
-	fontmap = pango_cairo_font_map_get_default ();
-	pango_font_map_list_families (fontmap, &families, &n_families);
-
-	for (i = 0; i < n_families; i++)
-	{
-		family = families[i];
-		family_name = pango_font_family_get_name (family);
-
-		if (!g_ascii_strcasecmp (family_name, fontname))
-		{
-			g_free (families);
-			return TRUE;
-		}
-	}
-
-	g_free (families);
-	return FALSE;
-}
-#endif

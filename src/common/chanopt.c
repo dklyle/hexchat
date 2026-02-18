@@ -27,11 +27,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 

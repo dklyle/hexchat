@@ -39,12 +39,7 @@
 #define WANTDNS
 #include "inet.h"
 
-#ifdef WIN32
-#include <windows.h>
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "util.h"
@@ -57,11 +52,6 @@
 #include "text.h"
 #include "url.h"
 #include "hexchatc.h"
-
-/* Setting _FILE_OFFSET_BITS to 64 doesn't change lseek to use off64_t on Windows, so override lseek to the version that does */
-#if defined(WIN32) && (!defined(__MINGW32__) && !defined(__MINGW64__))
-	#define lseek _lseeki64
-#endif
 
 /* interval timer to detect timeouts */
 static int timeout_timer = 0;
@@ -790,23 +780,6 @@ dcc_did_connect (GIOChannel *source, GIOCondition condition, struct DCC *dcc)
 {
 	int er;
 	
-#ifdef WIN32
-	if (condition & G_IO_ERR)
-	{
-		int len;
-
-		/* find the last errno for this socket */
-		len = sizeof (er);
-		getsockopt (dcc->sok, SOL_SOCKET, SO_ERROR, (char *)&er, &len);
-		EMIT_SIGNAL (XP_TE_DCCCONFAIL, dcc->serv->front_session,
-						 dcctypes[dcc->type], dcc->nick, errorstring (er),
-						 NULL, 0);
-		dcc->dccstat = STAT_FAILED;
-		fe_dcc_update (dcc);
-		return FALSE;
-	}
-
-#else
 	struct sockaddr_in addr;
 
 	memset (&addr, 0, sizeof (addr));
@@ -814,7 +787,7 @@ dcc_did_connect (GIOChannel *source, GIOCondition condition, struct DCC *dcc)
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl (dcc->addr);
 
-	/* check if it's already connected; This always fails on winXP */
+	/* check if it's already connected */
 	if (connect (dcc->sok, (struct sockaddr *) &addr, sizeof (addr)) != 0)
 	{
 		er = sock_error ();
@@ -828,7 +801,6 @@ dcc_did_connect (GIOChannel *source, GIOCondition condition, struct DCC *dcc)
 			return FALSE;
 		}
 	}
-#endif
 	
 	return TRUE;
 }
@@ -2452,18 +2424,7 @@ dcc_add_file (session *sess, char *file, guint64 size, int port, char *nick, gui
 			strcat (dcc->destfile, G_DIR_SEPARATOR_S);
 		if (prefs.hex_dcc_save_nick)
 		{
-#ifdef WIN32
-			char *t = strlen (dcc->destfile) + dcc->destfile;
-			strcpy (t, nick);
-			while (*t)
-			{
-				if (*t == '\\' || *t == '|')
-					*t = '_';
-				t++;
-			}
-#else
 			strcat (dcc->destfile, nick);
-#endif
 			strcat (dcc->destfile, ".");
 		}
 		strcat (dcc->destfile, file);

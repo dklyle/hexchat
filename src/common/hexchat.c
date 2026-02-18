@@ -26,13 +26,9 @@
 #define WANTSOCKET
 #include "inet.h"
 
-#ifdef WIN32
-#include <windows.h>
-#else
 #include <sys/wait.h>
 #include <signal.h>
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "fe.h"
@@ -560,7 +556,6 @@ new_ircwindow (server *serv, char *name, int type, int focus)
 static void
 exec_notify_kill (session * sess)
 {
-#ifndef WIN32
 	struct nbexec *re;
 	if (sess->running_exec != NULL)
 	{
@@ -573,7 +568,6 @@ exec_notify_kill (session * sess)
 		g_free (re->linebuf);
 		g_free (re);
 	}
-#endif
 }
 
 static void
@@ -804,16 +798,6 @@ xchat_init (void)
 {
 	char buf[3068];
 
-#ifdef WIN32
-	WSADATA wsadata;
-
-	if (WSAStartup(0x0202, &wsadata) != 0)
-	{
-		MessageBox (NULL, "Cannot find winsock 2.2+", "Error", MB_OK);
-		exit (0);
-	}
-#endif	/* !WIN32 */
-
 #ifdef USE_SIGACTION
 	struct sigaction act;
 
@@ -834,10 +818,8 @@ xchat_init (void)
 	sigemptyset (&act.sa_mask);
 	sigaction (SIGUSR2, &act, NULL);
 #else
-#ifndef WIN32
 	/* good enough for these old systems */
 	signal (SIGPIPE, SIG_IGN);
-#endif
 #endif
 
 	load_text_events ();
@@ -1012,18 +994,6 @@ hexchat_exec (const char *cmd)
 static void
 set_locale (void)
 {
-#ifdef WIN32
-	char hexchat_lang[13];	/* LC_ALL= plus 5 chars of hex_gui_lang and trailing \0 */
-
-	strcpy (hexchat_lang, "LC_ALL=");
-
-	if (0 <= prefs.hex_gui_lang && prefs.hex_gui_lang < LANGUAGES_LENGTH)
-		strcat (hexchat_lang, languages[prefs.hex_gui_lang]);
-	else
-		strcat (hexchat_lang, "en");
-
-	putenv (hexchat_lang);
-#endif
 }
 
 int
@@ -1031,10 +1001,6 @@ main (int argc, char *argv[])
 {
 	int i;
 	int ret;
-
-#ifdef WIN32
-	HRESULT coinit_result;
-#endif
 
 	srand ((unsigned int) time (NULL)); /* CL: do this only once! */
 
@@ -1094,14 +1060,6 @@ main (int argc, char *argv[])
 	hexchat_remote ();
 #endif
 
-#ifdef WIN32
-	coinit_result = CoInitializeEx (NULL, COINIT_APARTMENTTHREADED);
-	if (SUCCEEDED (coinit_result))
-	{
-		CoInitializeSecurity (NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
-	}
-#endif
-
 	fe_init ();
 
 	/* This is done here because cfgfiles.c is too early in
@@ -1116,29 +1074,16 @@ main (int argc, char *argv[])
 		fe_message (buf, FE_MSG_ERROR);
 	}
 
-#ifndef WIN32
 #ifndef __EMX__
 	/* OS/2 uses UID 0 all the time */
 	if (getuid () == 0)
 		fe_message (_("* Running IRC as root is stupid! You should\n"
 			      "  create a User Account and use that to login.\n"), FE_MSG_WARN|FE_MSG_WAIT);
 #endif
-#endif /* !WIN32 */
 
 	xchat_init ();
 
 	fe_main ();
-
-#ifdef WIN32
-	if (SUCCEEDED (coinit_result))
-	{
-		CoUninitialize ();
-	}
-#endif
-
-#ifdef WIN32
-	WSACleanup ();
-#endif
 
 	return 0;
 }

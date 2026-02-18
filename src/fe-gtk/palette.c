@@ -22,11 +22,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "fe-gtk.h"
 #include "palette.h"

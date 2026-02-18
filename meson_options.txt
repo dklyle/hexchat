@@ -17,10 +17,10 @@ option('plugin', type: 'boolean',
   description: 'Support for loadable plugins'
 )
 option('dbus', type: 'feature', value: 'auto',
-  description: 'Support used for single-instance and scripting interface, Unix only'
+  description: 'Support used for single-instance and scripting interface'
 )
 option('libcanberra', type: 'feature', value: 'auto',
-  description: 'Support for sound alerts, Unix only'
+  description: 'Support for sound alerts'
 )
 
 # Install options
@@ -38,9 +38,6 @@ option('install-plugin-metainfo', type: 'boolean', value: false,
 option('with-checksum', type: 'boolean',
   description: 'DCC checksum plugin'
 )
-option('with-exec', type: 'boolean',
-  description: '/exec plugin, Windows only'
-)
 option('with-fishlim', type: 'boolean',
   description: 'Fish encryption plugin, requires openssl'
 )
@@ -54,13 +51,7 @@ option('with-python', type: 'string', value: 'python3',
   description: 'Python scripting plugin. value is pkg-config name to use or "false"'
 )
 option('with-sysinfo', type: 'boolean',
-  description: 'System information plugin, requires libpci on Unix'
-)
-option('with-upd', type: 'boolean',
-  description: 'Update plugin, Windows only'
-)
-option('with-winamp', type: 'boolean',
-  description: 'Winamp plugin, Windows only'
+  description: 'System information plugin, requires libpci'
 )
 option('with-perl-legacy-api', type: 'boolean', value: false,
   description: 'Enables the legacy IRC perl module for compatibility with old scripts'

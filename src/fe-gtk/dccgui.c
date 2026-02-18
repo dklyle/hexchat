@@ -110,12 +110,8 @@ proper_unit (guint64 size, char *buf, size_t buf_len)
 	gchar *formatted_str;
 	GFormatSizeFlags format_flags = G_FORMAT_SIZE_DEFAULT;
 
-#ifndef __APPLE__ /* OS X uses SI */
-#ifndef WIN32 /* Windows uses IEC size (with SI format) */
 	if (prefs.hex_gui_filesize_iec) /* Linux can't decide... */
-#endif
 		format_flags = G_FORMAT_SIZE_IEC_UNITS;
-#endif
 
 	formatted_str = g_format_size_full (size, format_flags);
 	g_strlcpy (buf, formatted_str, buf_len);
@@ -600,15 +596,10 @@ clear_completed (GtkWidget * wid, gpointer none)
 static void
 browse_folder (char *dir)
 {
-#ifdef WIN32
-	/* no need for file:// in ShellExecute() */
-	fe_open_url (dir);
-#else
 	char buf[512];
 
 	g_snprintf (buf, sizeof (buf), "file://%s", dir);
 	fe_open_url (buf);
-#endif
 }
 
 static void

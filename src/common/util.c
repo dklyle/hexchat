@@ -29,16 +29,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#ifdef WIN32
-#include <sys/timeb.h>
-#include <io.h>
-#include "./sysinfo/sysinfo.h"
-#else
 #include <unistd.h>
 #include <pwd.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
-#endif
 
 #include "config.h"
 #include <fcntl.h>
@@ -48,7 +42,7 @@
 #include <ctype.h>
 #include "util.h"
 
-#if defined (__FreeBSD__) || defined (__APPLE__)
+#ifdef __FreeBSD__
 #include <sys/sysctl.h>
 #endif
 
@@ -56,9 +50,7 @@
 #ifdef USE_OPENSSL
 #include <openssl/bn.h>
 #include <openssl/rand.h>
-#ifndef WIN32
 #include <netinet/in.h>
-#endif
 #endif
 
 char *
@@ -74,9 +66,6 @@ file_part (char *file)
 			case 0:
 				return (filepart);
 			case '/':
-#ifdef WIN32
-			case '\\':
-#endif
 				filepart = file + 1;
 				break;
 		}
@@ -117,65 +106,7 @@ errorstring (int err)
 		return "";
 	case 0:
 		return _("Remote host closed socket");
-#ifndef WIN32
 	}
-#else
-	case WSAECONNREFUSED:
-		return _("Connection refused");
-	case WSAENETUNREACH:
-	case WSAEHOSTUNREACH:
-		return _("No route to host");
-	case WSAETIMEDOUT:
-		return _("Connection timed out");
-	case WSAEADDRNOTAVAIL:
-		return _("Cannot assign that address");
-	case WSAECONNRESET:
-		return _("Connection reset by peer");
-	}
-
-	/* can't use strerror() on Winsock errors! */
-	if (err >= WSABASEERR)
-	{
-		static char tbuf[384];
-		OSVERSIONINFO osvi;
-
-		osvi.dwOSVersionInfoSize = sizeof (OSVERSIONINFO);
-		GetVersionEx (&osvi);
-
-		/* FormatMessage works on WSA*** errors starting from Win2000 */
-		if (osvi.dwMajorVersion >= 5)
-		{
-			if (FormatMessageA (FORMAT_MESSAGE_FROM_SYSTEM |
-									  FORMAT_MESSAGE_IGNORE_INSERTS |
-									  FORMAT_MESSAGE_MAX_WIDTH_MASK,
-									  NULL, err,
-									  MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
-									  tbuf, sizeof (tbuf), NULL))
-			{
-				int len;
-				char *utf;
-
-				tbuf[sizeof (tbuf) - 1] = 0;
-				len = strlen (tbuf);
-				if (len >= 2)
-					tbuf[len - 2] = 0;	/* remove the cr-lf */
-
-				/* now convert to utf8 */
-				utf = g_locale_to_utf8 (tbuf, -1, 0, 0, 0);
-				if (utf)
-				{
-					safe_strcpy (tbuf, utf, sizeof (tbuf));
-					g_free (utf);
-					return tbuf;
-				}
-			}
-		}	/* ! if (osvi.dwMajorVersion >= 5) */
-
-		/* fallback to error number */
-		sprintf (tbuf, "%s %d", _("Error"), err);
-		return tbuf;
-	} /* ! if (err >= WSABASEERR) */
-#endif	/* ! WIN32 */
 
 	return strerror (err);
 }
@@ -205,40 +136,11 @@ waitline (int sok, char *buf, int bufsize, int use_recv)
 	}
 }
 
-#ifdef WIN32
-/* waitline2 using win32 file descriptor and glib instead of _read. win32 can't _read() sok! */
-int
-waitline2 (GIOChannel *source, char *buf, int bufsize)
-{
-	int i = 0;
-	gsize len;
-	GError *error = NULL;
-
-	while (1)
-	{
-		g_io_channel_set_buffered (source, FALSE);
-		g_io_channel_set_encoding (source, NULL, &error);
-
-		if (g_io_channel_read_chars (source, &buf[i], 1, &len, &error) != G_IO_STATUS_NORMAL)
-		{
-			return -1;
-		}
-		if (buf[i] == '\n' || bufsize == i + 1)
-		{
-			buf[i] = 0;
-			return i;
-		}
-		i++;
-	}
-}
-#endif
-
 /* checks for "~" in a file and expands */
 
 char *
 expand_homedir (char *file)
 {
-#ifndef WIN32
 	char *user;
 	struct passwd *pw;
 
@@ -267,7 +169,6 @@ expand_homedir (char *file)
 		else
 			return g_strconcat (pw->pw_dir, slash_pos, NULL);
 	}
-#endif
 	return g_strdup (file);
 }
 
@@ -361,13 +262,13 @@ strip_hidden_attribute (char *src, char *dst)
 	return len;
 }
 
-#if defined (__linux__) || defined (__FreeBSD__) || defined (__APPLE__) || defined (__CYGWIN__)
+#if defined (__linux__) || defined (__FreeBSD__)
 
 static void
 get_cpu_info (double *mhz, int *cpus)
 {
 
-#if defined(__linux__) || defined (__CYGWIN__)
+#if defined(__linux__)
 
 	char buf[256];
 	int fh;
@@ -428,75 +329,14 @@ get_cpu_info (double *mhz, int *cpus)
 	*mhz = (freq / 1000000);
 
 #endif
-#ifdef __APPLE__
-
-	int mib[2], ncpu;
-	unsigned long long freq;
-	size_t len;
-
-	freq = 0;
-	*mhz = 0;
-	*cpus = 0;
-
-	mib[0] = CTL_HW;
-	mib[1] = HW_NCPU;
-
-	len = sizeof(ncpu);
-	sysctl(mib, 2, &ncpu, &len, NULL, 0);
-
-	len = sizeof(freq);
-        sysctlbyname("hw.cpufrequency", &freq, &len, NULL, 0);
-
-	*cpus = ncpu;
-	*mhz = (freq / 1000000);
-
-#endif
 
 }
 #endif
 
-#ifdef WIN32
-
-int
-get_cpu_arch (void)
-{
-	return sysinfo_get_build_arch ();
-}
-
 char *
 get_sys_str (int with_cpu)
 {
-	static char *without_cpu_buffer = NULL;
-	static char *with_cpu_buffer = NULL;
-
-	if (with_cpu == 0)
-	{
-		if (without_cpu_buffer == NULL)
-		{
-			without_cpu_buffer = sysinfo_get_os ();
-		}
-
-		return without_cpu_buffer;
-	}
-
-	if (with_cpu_buffer == NULL)
-	{
-		char *os = sysinfo_get_os ();
-		char *cpu = sysinfo_get_cpu ();
-		with_cpu_buffer = g_strconcat (os, " [", cpu, "]", NULL);
-		g_free (cpu);
-		g_free (os);
-	}
-
-	return with_cpu_buffer;
-}
-
-#else
-
-char *
-get_sys_str (int with_cpu)
-{
-#if defined (__linux__) || defined (__FreeBSD__) || defined (__APPLE__) || defined (__CYGWIN__)
+#if defined (__linux__) || defined (__FreeBSD__)
 	double mhz;
 #endif
 	int cpus = 1;
@@ -508,7 +348,7 @@ get_sys_str (int with_cpu)
 
 	uname (&un);
 
-#if defined (__linux__) || defined (__FreeBSD__) || defined (__APPLE__) || defined (__CYGWIN__)
+#if defined (__linux__) || defined (__FreeBSD__)
 	get_cpu_info (&mhz, &cpus);
 	if (mhz && with_cpu)
 	{
@@ -527,8 +367,6 @@ get_sys_str (int with_cpu)
 
 	return buf;
 }
-
-#endif
 
 int
 buf_get_line (char *ibuf, char **buf, int *position, int len)
@@ -1009,13 +847,8 @@ util_exec (const char *cmd)
 unsigned long
 make_ping_time (void)
 {
-#ifndef WIN32
 	struct timeval timev;
 	gettimeofday (&timev, 0);
-#else
-	GTimeVal timev;
-	g_get_current_time (&timev);
-#endif
 	return (timev.tv_sec - 50000) * 1000 + timev.tv_usec/1000;
 }
 
@@ -1328,28 +1161,7 @@ canonalize_key (char *key)
 int
 portable_mode (void)
 {
-#ifdef WIN32
-	static int is_portable = -1;
-
-	if (G_UNLIKELY(is_portable == -1))
-	{
-		char *path = g_win32_get_package_installation_directory_of_module (NULL);
-		char *filename;
-
-		if (path == NULL)
-			path = g_strdup (".");
-
-		filename = g_build_filename (path, "portable-mode", NULL);
-		is_portable = g_file_test (filename, G_FILE_TEST_EXISTS);
-
-		g_free (path);
-		g_free (filename);
-	}
-
-	return is_portable;
-#else
 	return 0;
-#endif
 }
 
 char *
@@ -1478,68 +1290,7 @@ challengeauth_response (const char *username, const char *password, const char *
 size_t
 strftime_validated (char *dest, size_t destsize, const char *format, const struct tm *time)
 {
-#ifndef WIN32
 	return strftime (dest, destsize, format, time);
-#else
-	char safe_format[64];
-	const char *p = format;
-	int i = 0;
-
-	if (strlen (format) >= sizeof(safe_format))
-		return 0;
-
-	memset (safe_format, 0, sizeof(safe_format));
-
-	while (*p)
-	{
-		if (*p == '%')
-		{
-			int has_hash = (*(p + 1) == '#');
-			char c = *(p + (has_hash ? 2 : 1));
-
-			if (i >= sizeof (safe_format))
-				return 0;
-
-			switch (c)
-			{
-			case 'a': case 'A': case 'b': case 'B': case 'c': case 'd': case 'H': case 'I': case 'j': case 'm': case 'M':
-			case 'p': case 'S': case 'U': case 'w': case 'W': case 'x': case 'X': case 'y': case 'Y': case 'z': case 'Z':
-			case '%':
-				/* formatting code is fine */
-				break;
-			default:
-				/* replace bad formatting code with itself, escaped, e.g. "%V" --> "%%V" */
-				g_strlcat (safe_format, "%%", sizeof(safe_format));
-				i += 2;
-				p++;
-				break;
-			}
-
-			/* the current loop run will append % (and maybe #) and the next one will do the actual char. */
-			if (has_hash)
-			{
-				safe_format[i] = *p;
-				p++;
-				i++;
-			}
-			if (c == '%')
-			{
-				safe_format[i] = *p;
-				p++;
-				i++;
-			}
-		}
-
-		if (*p)
-		{
-			safe_format[i] = *p;
-			p++;
-			i++;
-		}
-	}
-
-	return strftime (dest, destsize, safe_format, time);
-#endif
 }
 
 /**

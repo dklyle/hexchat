@@ -24,16 +24,10 @@
 
 #define DISPLAY_NAME "HexChat"
 
-#ifndef WIN32
 #include <sys/types.h>
-#endif
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-
-#ifdef HAVE_GTK_MAC
-#include <gtkosxapplication.h>
-#endif
 
 #include "banlist.h"
 
@@ -46,10 +40,6 @@
 #define flag_k flag_wid[6]
 #define flag_b flag_wid[7]
 #define NUM_FLAG_WIDS 8
-
-#ifdef HAVE_GTK_MAC
-extern GtkosxApplication *osx_app;
-#endif
 
 struct server_gui
 {

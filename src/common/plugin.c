@@ -23,11 +23,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "fe.h"
@@ -228,33 +224,11 @@ plugin_list_add (hexchat_context *ctx, char *filename, const char *name,
 	return pl;
 }
 
-#ifndef WIN32
 static void *
 hexchat_dummy (hexchat_plugin *ph)
 {
 	return NULL;
 }
-
-#else
-
-static int
-hexchat_read_fd (hexchat_plugin *ph, GIOChannel *source, char *buf, int *len)
-{
-	GError *error = NULL;
-
-	g_io_channel_set_buffered (source, FALSE);
-	g_io_channel_set_encoding (source, NULL, &error);
-
-	if (g_io_channel_read_chars (source, buf, *len, (gsize*)len, &error) == G_IO_STATUS_NORMAL)
-	{
-		return 0;
-	}
-	else
-	{
-		return -1;
-	}
-}
-#endif
 
 /* Load a static plugin */
 
@@ -298,11 +272,7 @@ plugin_add (session *sess, char *filename, void *handle, void *init_func,
 		pl->hexchat_plugingui_add = hexchat_plugingui_add;
 		pl->hexchat_plugingui_remove = hexchat_plugingui_remove;
 		pl->hexchat_emit_print = hexchat_emit_print;
-#ifdef WIN32
-		pl->hexchat_read_fd = (void *) hexchat_read_fd;
-#else
 		pl->hexchat_read_fd = hexchat_dummy;
-#endif
 		pl->hexchat_list_time = hexchat_list_time;
 		pl->hexchat_gettext = hexchat_gettext;
 		pl->hexchat_send_modes = hexchat_send_modes;
@@ -383,7 +353,7 @@ plugin_kill_all (void)
 	}
 }
 
-#if defined(USE_PLUGIN) || defined(WIN32)
+#if defined(USE_PLUGIN)
 /* used for loading plugins, and in fe-gtk/notifications/notification-windows.c */
 
 GModule *
@@ -483,21 +453,7 @@ plugin_auto_load (session *sess)
 	lib_dir = plugin_get_libdir ();
 	sub_dir = g_build_filename (get_xdir (), "addons", NULL);
 
-#ifdef WIN32
-	/* a long list of bundled plugins that should be loaded automatically,
-	 * user plugins should go to <config>, leave Program Files alone! */
-	for_files (lib_dir, "hcchecksum.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcexec.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcfishlim.dll", plugin_auto_load_cb);
-	for_files(lib_dir, "hclua.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcperl.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcpython3.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcupd.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcwinamp.dll", plugin_auto_load_cb);
-	for_files (lib_dir, "hcsysinfo.dll", plugin_auto_load_cb);
-#else
 	for_files (lib_dir, "*."PLUGIN_SUFFIX, plugin_auto_load_cb);
-#endif
 
 	for_files (sub_dir, "*."PLUGIN_SUFFIX, plugin_auto_load_cb);
 
@@ -1835,10 +1791,6 @@ hexchat_pluginpref_set_str_real (hexchat_plugin *pl, const char *var, const char
 			buffer_tmp = g_build_filename (get_xdir (), confname_tmp, NULL);
 			g_free (confname_tmp);
 
-#ifdef WIN32
-			g_unlink (buffer);
-#endif
-
 			if (g_rename (buffer_tmp, buffer) == 0)
 			{
 				g_free (buffer);
@@ -1912,10 +1864,6 @@ hexchat_pluginpref_set_str_real (hexchat_plugin *pl, const char *var, const char
 		g_free (confname);
 		buffer_tmp = g_build_filename (get_xdir (), confname_tmp, NULL);
 		g_free (confname_tmp);
-
-#ifdef WIN32
-		g_unlink (buffer);
-#endif
 
 		if (g_rename (buffer_tmp, buffer) == 0)
 		{

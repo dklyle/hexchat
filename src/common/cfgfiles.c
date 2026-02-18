@@ -31,12 +31,8 @@
 #include "hexchatc.h"
 #include "typedef.h"
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
 #define HEXCHAT_DIR "hexchat"
-#endif
 
 #define DEF_FONT "Monospace 9"
 #define DEF_FONT_ALTER "Arial Unicode MS,Segoe UI Emoji,Lucida Sans Unicode,Meiryo,Symbola,Unifont"
@@ -290,43 +286,12 @@ cfg_get_int (char *cfg, char *var)
 
 char *xdir = NULL;	/* utf-8 encoding */
 
-#ifdef WIN32
-#include <windows.h>
-#include <shlobj.h>
-#endif
-
 char *
 get_xdir (void)
 {
 	if (!xdir)
 	{
-#ifndef WIN32
 		xdir = g_build_filename (g_get_user_config_dir (), HEXCHAT_DIR, NULL);
-#else
-		wchar_t* roaming_path_wide;
-		gchar* roaming_path;
-
-		if (portable_mode () || SHGetKnownFolderPath (&FOLDERID_RoamingAppData, 0, NULL, &roaming_path_wide) != S_OK)
-		{
-			char *path = g_win32_get_package_installation_directory_of_module (NULL);
-			if (path)
-			{
-				xdir = g_build_filename (path, "config", NULL);
-				g_free (path);
-			}
-			else
-				xdir = g_strdup (".\\config");
-		}
-		else
-		{
-			roaming_path = g_utf16_to_utf8 (roaming_path_wide, -1, NULL, NULL, NULL);
-			CoTaskMemFree (roaming_path_wide);
-
-			xdir = g_build_filename (roaming_path, "HexChat", NULL);
-
-			g_free (roaming_path);
-		}
-#endif
 	}
 
 	return xdir;
@@ -373,9 +338,7 @@ const struct prefs vars[] =
 	{"dcc_blocksize", P_OFFINT (hex_dcc_blocksize), TYPE_INT},
 	{"dcc_completed_dir", P_OFFSET (hex_dcc_completed_dir), TYPE_STR},
 	{"dcc_dir", P_OFFSET (hex_dcc_dir), TYPE_STR},
-#ifndef WIN32
 	{"dcc_fast_send", P_OFFINT (hex_dcc_fast_send), TYPE_BOOL},
-#endif
 	{"dcc_global_max_get_cps", P_OFFINT (hex_dcc_global_max_get_cps), TYPE_INT},
 	{"dcc_global_max_send_cps", P_OFFINT (hex_dcc_global_max_send_cps), TYPE_INT},
 	{"dcc_ip", P_OFFSET (hex_dcc_ip), TYPE_STR},
@@ -529,9 +492,7 @@ const struct prefs vars[] =
 	{"irc_whois_front", P_OFFINT (hex_irc_whois_front), TYPE_BOOL},
 
 	{"net_auto_reconnect", P_OFFINT (hex_net_auto_reconnect), TYPE_BOOL},
-#ifndef WIN32	/* FIXME fix reconnect crashes and remove this ifdef! */
 	{"net_auto_reconnectonfail", P_OFFINT (hex_net_auto_reconnectonfail), TYPE_BOOL},
-#endif
 	{"net_bind_host", P_OFFSET (hex_net_bind_host), TYPE_STR},
 	{"net_ping_timeout", P_OFFINT (hex_net_ping_timeout), TYPE_INT, hexchat_reinit_timers},
 	{"net_proxy_auth", P_OFFINT (hex_net_proxy_auth), TYPE_BOOL},
@@ -592,7 +553,6 @@ convert_with_fallback (char *str, const char *fallback)
 {
 	char *utf;
 
-#ifndef WIN32
 	/* On non-Windows, g_get_user_name and g_get_real_name return a string in system locale, so convert it to utf-8. */
 	utf = g_locale_to_utf8 (str, -1, NULL, NULL, 0);
 
@@ -601,10 +561,6 @@ convert_with_fallback (char *str, const char *fallback)
 	/* The returned string is NULL if conversion from locale to utf-8 failed for any reason. Return the fallback. */
 	if (!utf)
 		utf = g_strdup (fallback);
-#else
-	/* On Windows, they return a string in utf-8, so don't do anything to it. The fallback isn't needed. */
-	utf = str;
-#endif
 
 	return utf;
 }
@@ -716,10 +672,6 @@ load_default_config(void)
 	char *username, *realname, *langs;
 	const char *font;
 	char *sp;
-#ifdef WIN32
-	wchar_t* roaming_path_wide;
-	gchar* roaming_path;
-#endif
 
 	username = g_strdup(g_get_user_name ());
 	if (!username)
@@ -742,9 +694,7 @@ load_default_config(void)
 	prefs.hex_away_show_once = 1;
 	prefs.hex_away_track = 1;
 	prefs.hex_dcc_auto_resume = 1;
-#ifndef WIN32
 	prefs.hex_dcc_fast_send = 1;
-#endif
 	prefs.hex_gui_autoopen_chat = 1;
 	prefs.hex_gui_autoopen_dialog = 1;
 	prefs.hex_gui_autoopen_recv = 1;
@@ -844,21 +794,6 @@ load_default_config(void)
 	/* STRINGS */
 	strcpy (prefs.hex_away_reason, _("I'm busy"));
 	strcpy (prefs.hex_completion_suffix, ",");
-#ifdef WIN32
-	if (portable_mode () || SHGetKnownFolderPath (&FOLDERID_Downloads, 0, NULL, &roaming_path_wide) != S_OK)
-	{
-		g_snprintf (prefs.hex_dcc_dir, sizeof (prefs.hex_dcc_dir), "%s\\downloads", get_xdir ());
-	}
-	else
-	{
-		roaming_path = g_utf16_to_utf8 (roaming_path_wide, -1, NULL, NULL, NULL);
-		CoTaskMemFree (roaming_path_wide);
-
-		g_strlcpy (prefs.hex_dcc_dir, roaming_path, sizeof (prefs.hex_dcc_dir));
-
-		g_free (roaming_path);
-	}
-#else
 	if (g_get_user_special_dir (G_USER_DIRECTORY_DOWNLOAD))
 	{
 		safe_strcpy (prefs.hex_dcc_dir, g_get_user_special_dir (G_USER_DIRECTORY_DOWNLOAD), sizeof(prefs.hex_dcc_dir));
@@ -869,7 +804,6 @@ load_default_config(void)
 		safe_strcpy (prefs.hex_dcc_dir, download_dir, sizeof(prefs.hex_dcc_dir));
 		g_free (download_dir);
 	}
-#endif
 	strcpy (prefs.hex_gui_ulist_doubleclick, "QUERY %s");
 	strcpy (prefs.hex_input_command_char, "/");
 	strcpy (prefs.hex_irc_logmask, "%n"G_DIR_SEPARATOR_S"%c.log");
@@ -1065,9 +999,6 @@ save_config (void)
 		return 0;
 	}
 
-#ifdef WIN32
-	g_unlink (config);	/* win32 can't rename to an existing file */
-#endif
 	if (g_rename (new_config, config) == -1)
 	{
 		g_free (new_config);

@@ -29,12 +29,7 @@
 #ifndef HEXCHAT_H
 #define HEXCHAT_H
 
-#ifdef USE_OPENSSL
-#ifdef __APPLE__
-#define __AVAILABILITYMACROS__
-#define DEPRECATED_IN_MAC_OS_X_VERSION_10_7_AND_LATER
-#endif
-#endif
+
 
 #include "history.h"
 #include "tree.h"
@@ -55,21 +50,7 @@
 /* force a 32bit CMP.L */
 #define WORDL(c0, c1, c2, c3) (guint32)(c0 | (c1 << 8) | (c2 << 16) | (c3 << 24))
 
-#ifdef WIN32						/* for win32 */
-#define OFLAGS O_BINARY
-#define sleep(t) Sleep(t*1000)
-#include <direct.h>
-#define	F_OK	0
-#define	X_OK	1
-#define	W_OK	2
-#define	R_OK	4
-#ifndef S_ISDIR
-#define	S_ISDIR(m)	((m) & _S_IFDIR)
-#endif
-#define NETWORK_PRIVATE
-#else									/* for unix */
 #define OFLAGS 0
-#endif
 
 #define FONTNAMELEN	127
 #define PATHLEN		255

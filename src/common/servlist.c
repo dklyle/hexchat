@@ -22,9 +22,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#ifndef WIN32
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "cfgfiles.h"
@@ -1109,29 +1107,23 @@ servlist_save (void)
 	GSList *netlist;
 	GSList *cmdlist;
 	GSList *favlist;
-#ifndef WIN32
 	int first = FALSE;
 
 	buf = g_build_filename (get_xdir (), "servlist.conf", NULL);
 	if (g_access (buf, F_OK) != 0)
 		first = TRUE;
-#endif
 
 	fp = hexchat_fopen_file ("servlist.conf", "w", 0);
 	if (!fp)
 	{
-#ifndef WIN32
 		g_free (buf);
-#endif
 		return FALSE;
 	}
 
-#ifndef WIN32
 	if (first)
 		g_chmod (buf, 0600);
 
 	g_free (buf);
-#endif
 	fprintf (fp, "v=" PACKAGE_VERSION "\n\n");
 
 	list = network_list;

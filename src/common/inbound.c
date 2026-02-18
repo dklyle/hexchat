@@ -23,11 +23,7 @@
 #include <sys/types.h>
 #include <time.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #define WANTARPA
 #define WANTDNS

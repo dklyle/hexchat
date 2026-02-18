@@ -25,11 +25,7 @@
 
 #include <gdk/gdkkeysyms.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "fe-gtk.h"
 

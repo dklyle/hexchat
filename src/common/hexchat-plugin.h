@@ -406,53 +406,6 @@ int
 hexchat_pluginpref_list (hexchat_plugin *ph,
 		char *dest);
 
-#if !defined(PLUGIN_C) && (defined(WIN32) || defined(__CYGWIN__))
-#ifndef HEXCHAT_PLUGIN_HANDLE
-#define HEXCHAT_PLUGIN_HANDLE (ph)
-#endif
-#define hexchat_hook_command ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_command)
-#define hexchat_event_attrs_create ((HEXCHAT_PLUGIN_HANDLE)->hexchat_event_attrs_create)
-#define hexchat_event_attrs_free ((HEXCHAT_PLUGIN_HANDLE)->hexchat_event_attrs_free)
-#define hexchat_hook_server ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_server)
-#define hexchat_hook_server_attrs ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_server_attrs)
-#define hexchat_hook_print ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_print)
-#define hexchat_hook_print_attrs ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_print_attrs)
-#define hexchat_hook_timer ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_timer)
-#define hexchat_hook_fd ((HEXCHAT_PLUGIN_HANDLE)->hexchat_hook_fd)
-#define hexchat_unhook ((HEXCHAT_PLUGIN_HANDLE)->hexchat_unhook)
-#define hexchat_print ((HEXCHAT_PLUGIN_HANDLE)->hexchat_print)
-#define hexchat_printf ((HEXCHAT_PLUGIN_HANDLE)->hexchat_printf)
-#define hexchat_command ((HEXCHAT_PLUGIN_HANDLE)->hexchat_command)
-#define hexchat_commandf ((HEXCHAT_PLUGIN_HANDLE)->hexchat_commandf)
-#define hexchat_nickcmp ((HEXCHAT_PLUGIN_HANDLE)->hexchat_nickcmp)
-#define hexchat_set_context ((HEXCHAT_PLUGIN_HANDLE)->hexchat_set_context)
-#define hexchat_find_context ((HEXCHAT_PLUGIN_HANDLE)->hexchat_find_context)
-#define hexchat_get_context ((HEXCHAT_PLUGIN_HANDLE)->hexchat_get_context)
-#define hexchat_get_info ((HEXCHAT_PLUGIN_HANDLE)->hexchat_get_info)
-#define hexchat_get_prefs ((HEXCHAT_PLUGIN_HANDLE)->hexchat_get_prefs)
-#define hexchat_list_get ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_get)
-#define hexchat_list_free ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_free)
-#define hexchat_list_fields ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_fields)
-#define hexchat_list_next ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_next)
-#define hexchat_list_str ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_str)
-#define hexchat_list_int ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_int)
-#define hexchat_plugingui_add ((HEXCHAT_PLUGIN_HANDLE)->hexchat_plugingui_add)
-#define hexchat_plugingui_remove ((HEXCHAT_PLUGIN_HANDLE)->hexchat_plugingui_remove)
-#define hexchat_emit_print ((HEXCHAT_PLUGIN_HANDLE)->hexchat_emit_print)
-#define hexchat_emit_print_attrs ((HEXCHAT_PLUGIN_HANDLE)->hexchat_emit_print_attrs)
-#define hexchat_list_time ((HEXCHAT_PLUGIN_HANDLE)->hexchat_list_time)
-#define hexchat_gettext ((HEXCHAT_PLUGIN_HANDLE)->hexchat_gettext)
-#define hexchat_send_modes ((HEXCHAT_PLUGIN_HANDLE)->hexchat_send_modes)
-#define hexchat_strip ((HEXCHAT_PLUGIN_HANDLE)->hexchat_strip)
-#define hexchat_free ((HEXCHAT_PLUGIN_HANDLE)->hexchat_free)
-#define hexchat_pluginpref_set_str ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_set_str)
-#define hexchat_pluginpref_get_str ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_get_str)
-#define hexchat_pluginpref_set_int ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_set_int)
-#define hexchat_pluginpref_get_int ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_get_int)
-#define hexchat_pluginpref_delete ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_delete)
-#define hexchat_pluginpref_list ((HEXCHAT_PLUGIN_HANDLE)->hexchat_pluginpref_list)
-#endif
-
 #ifdef __cplusplus
 }
 #endif

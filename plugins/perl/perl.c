@@ -27,12 +27,7 @@
 #ifdef ENABLE_NLS
 #include <locale.h>
 #endif
-#ifdef WIN32
-#include <windows.h>
-#include <stdbool.h>
-#else
 #include <dirent.h>
-#endif
 
 #include <glib.h>
 
@@ -44,63 +39,8 @@ static hexchat_plugin *ph;		  /* plugin handle */
 
 static int perl_load_file (char *script_name);
 
-#ifdef WIN32
-/* STRINGIFY is from perl's CORE/config.h */
-#ifndef PERL_REQUIRED_VERSION
-	#define PERL_REQUIRED_VERSION STRINGIFY(PERL_REVISION) "." STRINGIFY(PERL_VERSION)
-#endif
-
-#ifndef PERL_DLL
-	#define PERL_DLL "perl" STRINGIFY(PERL_REVISION) STRINGIFY(PERL_VERSION) ".dll"
-#endif
-
-static DWORD
-child (char *str)
-{
-	MessageBoxA (0, str, "Perl DLL Error",
-					 MB_OK | MB_ICONHAND | MB_SETFOREGROUND | MB_TASKMODAL);
-	return 0;
-}
-
-static void
-thread_mbox (char *str)
-{
-	DWORD tid;
-
-	CloseHandle (CreateThread (NULL, 0, (LPTHREAD_START_ROUTINE) child,
-										str, 0, &tid));
-}
-
-#endif
-
 /* leave this before XSUB.h, to avoid readdir() being redefined */
 
-#ifdef WIN32
-static void
-perl_auto_load_from_path (const char *path)
-{
-	char *search_path = g_build_filename (path, "*.pl", NULL);
-	WIN32_FIND_DATAA find_data;
-	HANDLE find_handle = FindFirstFileA (search_path, &find_data);
-
-	if (find_handle != INVALID_HANDLE_VALUE)
-	{
-		do
-		{
-			if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && (find_data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) == 0)
-			{
-				char *full_path = g_build_filename (path, find_data.cFileName, NULL);
-				perl_load_file (full_path);
-				g_free (full_path);
-			}
-		}
-		while (FindNextFileA (find_handle, &find_data) != 0);
-		FindClose (find_handle);
-	}
-
-	g_free (search_path);
-}
-#else
 static void
 perl_auto_load_from_path (const char *path)
 {
@@ -123,17 +63,12 @@ perl_auto_load_from_path (const char *path)
 		closedir (dir);
 	}
 }
-#endif
 
 static int
 perl_auto_load (void *unused)
 {
 	const char *xdir;
 	char *sub_dir;
-#ifdef WIN32
-	int copied = 0;
-	char *slash = NULL;
-#endif
 
 	/* get the dir in local filesystem encoding (what opendir() expects!) */
 	xdir = hexchat_get_info (ph, "configdir");
@@ -1021,19 +956,6 @@ XS (XS_HexChat_hook_fd)
 		package = ST (4);
 		data = NULL;
 
-#ifdef WIN32
-		if ((flags & HEXCHAT_FD_NOTSOCKET) == 0) {
-			/* this _get_osfhandle if from win32iop.h in the perl distribution,
-			 *  not the one provided by Windows
-			 */ 
-			fd = _get_osfhandle(fd);
-			if (fd < 0) {
-				hexchat_print(ph, "Invalid file descriptor");
-				XSRETURN_UNDEF;
-			}
-		}
-#endif
-
 		data = g_new (HookData, 1);
 		data->callback = newSVsv (callback);
 		data->userdata = newSVsv (userdata);
@@ -1436,50 +1358,6 @@ perl_init (void)
 static int
 perl_load_file (char *filename)
 {
-#ifdef WIN32
-	static HMODULE lib = NULL;
-
-	if (!lib) {
-		lib = LoadLibraryA (PERL_DLL);
-		if (!lib) {
-			if (GetLastError () == ERROR_BAD_EXE_FORMAT)
-				/* http://forum.xchat.org/viewtopic.php?t=3277 */
-				thread_mbox ("Cannot use this " PERL_DLL "\n\n"
-#ifdef _WIN64
-								 "64-bit HexChat Perl is required.");
-#else
-								 "32-bit HexChat Perl is required.");
-#endif
-			else {
-				/* a lot of people install this old version */
-				lib = LoadLibraryA ("perl56.dll");
-				if (lib) {
-					FreeLibrary (lib);
-					lib = NULL;
-					thread_mbox ("Cannot open " PERL_DLL "!\n\n"
-									 "You must have a Visual C++ build of Perl "
-									 PERL_REQUIRED_VERSION " installed in order to\n"
-									 "run Perl scripts. A reboot may be required.\n\n"
-									 "http://hexchat.github.io/downloads.html\n\n"
-									 "I have found Perl 5.6, but that is too old.");
-				} else {
-					thread_mbox ("Cannot open " PERL_DLL "!\n\n"
-									 "You must have a Visual C++ build of Perl "
-									 PERL_REQUIRED_VERSION " installed in order to\n"
-									 "run Perl scripts. A reboot may be required.\n\n"
-									 "http://hexchat.github.io/downloads.html\n\n"
-									 "Make sure Perl's bin directory is in your PATH.");
-				}
-			}
-			/* failure */
-			return FALSE;
-		}
-
-		/* success */
-		FreeLibrary (lib);
-	}
-#endif
-
 	if (my_perl == NULL) {
 		perl_init ();
 	}

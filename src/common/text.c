@@ -25,12 +25,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
 #include <sys/mman.h>
-#endif
 
 #include "hexchat.h"
 #include "cfgfiles.h"
@@ -43,10 +39,6 @@
 #include "hexchatc.h"
 #include "text.h"
 #include "typedef.h"
-#ifdef WIN32
-#include <windows.h>
-#endif
-
 #ifdef USE_LIBCANBERRA
 #include <canberra.h>
 #endif
@@ -407,15 +399,8 @@ log_create_filename (char *channame)
 		mbl = g_utf8_skip[((unsigned char *)tmp)[0]];
 		if (mbl == 1)
 		{
-#ifndef WIN32
 			*tmp = rfc_tolower (*tmp);
 			if (*tmp == '/')
-#else
-			/* win32 can't handle filenames with \|/><:"*? characters */
-			if (*tmp == '\\' || *tmp == '|' || *tmp == '/' ||
-				 *tmp == '>'  || *tmp == '<' || *tmp == ':' ||
-				 *tmp == '\"' || *tmp == '*' || *tmp == '?')
-#endif
 				*tmp = '_';
 		}
 		tmp += mbl;
@@ -2220,9 +2205,7 @@ sound_play (const char *file, gboolean quiet)
 {
 	char *buf;
 	char *wavfile;
-#ifndef WIN32
 	char *cmd;
-#endif
 
 	/* the pevents GUI editor triggers this after removing a soundfile */
 	if (!file[0])
@@ -2242,16 +2225,6 @@ sound_play (const char *file, gboolean quiet)
 
 	if (g_access (wavfile, R_OK) == 0)
 	{
-#ifdef WIN32
-		gunichar2 *wavfile_utf16 = g_utf8_to_utf16 (wavfile, -1, NULL, NULL, NULL);
-
-		if (wavfile_utf16 != NULL)
-		{
-			PlaySoundW (wavfile_utf16, NULL, SND_NODEFAULT | SND_FILENAME | SND_ASYNC);
-
-			g_free (wavfile_utf16);
-		}
-#else
 #ifdef USE_LIBCANBERRA
 		if (ca_con == NULL)
 		{
@@ -2275,7 +2248,6 @@ sound_play (const char *file, gboolean quiet)
 				g_free (cmd);
 			}
 		}
-#endif
 	}
 	else
 	{

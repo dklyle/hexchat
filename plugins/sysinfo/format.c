@@ -74,10 +74,6 @@ sysinfo_format_disk (guint64 total, guint64 free)
 	char *total_fmt, *free_fmt, *used_fmt, *ret;
 	GFormatSizeFlags format_flags = G_FORMAT_SIZE_DEFAULT;
 
-#ifdef WIN32 /* Windows uses IEC size (with SI format) */
-	format_flags = G_FORMAT_SIZE_IEC_UNITS;
-#endif
-
 	total_fmt = g_format_size_full (total, format_flags);
 	free_fmt = g_format_size_full (free, format_flags);
 	used_fmt = g_format_size_full (total - free, format_flags);

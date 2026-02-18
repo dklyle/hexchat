@@ -19,5 +19,4 @@ shared_module('fishlim', fishlim_sources,
   install: true,
   install_dir: plugindir,
   name_prefix: '',
-  vs_module_defs: 'fishlim.def',
 )

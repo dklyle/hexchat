@@ -24,11 +24,7 @@
 #include <fcntl.h>
 #include <ctype.h>
 
-#ifdef WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #define GLIB_DISABLE_DEPRECATION_WARNINGS
 #include "fe-gtk.h"
@@ -289,12 +285,8 @@ key_modifier_get_valid (GdkModifierType mod)
 {
 	GdkModifierType ret;
 
-#ifdef __APPLE__
-	ret = mod & (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_META_MASK);
-#else
 	/* These masks work on both Windows and Unix */
 	ret = mod & (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK);
-#endif
 
 	return ret;
 }
@@ -438,20 +430,6 @@ key_dialog_combo_changed (GtkCellRendererCombo *combo, gchar *pathstr,
 
 	if (actiontext)
 	{
-#ifdef WIN32
-		/* We need to manually update the store */
-		GtkTreePath *path;
-		GtkTreeIter iter;
-
-		path = gtk_tree_path_new_from_string (pathstr);
-		model = get_store ();
-
-		gtk_tree_model_get_iter (model, &iter, path);
-		gtk_list_store_set (GTK_LIST_STORE (model), &iter, ACTION_COLUMN, actiontext, -1);
-
-		gtk_tree_path_free (path);
-#endif
-
 		action = key_get_action_from_string (actiontext);
 		key_dialog_print_text (xtext, key_actions[action].help);
 
@@ -678,9 +656,7 @@ key_dialog_treeview_new (GtkWidget *box)
 
 	render = gtk_cell_renderer_accel_new ();
 	g_object_set (render, "editable", TRUE,
-#ifndef WIN32
 					"accel-mode", GTK_CELL_RENDERER_ACCEL_MODE_OTHER,
-#endif
 					NULL);
 	g_signal_connect (G_OBJECT (render), "accel-edited",
 					G_CALLBACK (key_dialog_set_key), NULL);

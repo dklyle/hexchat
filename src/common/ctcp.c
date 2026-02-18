@@ -20,9 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#ifndef WIN32
 #include <unistd.h>
-#endif
 
 #include "hexchat.h"
 #include "cfgfiles.h"
@@ -135,13 +133,8 @@ ctcp_handle (session *sess, char *to, char *nick, char *ip,
 
 	if (!g_ascii_strcasecmp (msg, "VERSION") && !prefs.hex_irc_hide_version)
 	{
-#ifdef WIN32
-		g_snprintf (outbuf, sizeof (outbuf), "VERSION HexChat "PACKAGE_VERSION" [x%d] / %s",
-					 get_cpu_arch (), get_sys_str (1));
-#else
 		g_snprintf (outbuf, sizeof (outbuf), "VERSION HexChat "PACKAGE_VERSION" / %s",
 					 get_sys_str (1));
-#endif
 		serv->p_nctcp (serv, nick, outbuf);
 	}
 
@@ -172,11 +165,7 @@ ctcp_handle (session *sess, char *to, char *nick, char *ip,
 			}
 
 			/* don't let IRCers specify path */
-#ifdef WIN32
-			if (strchr (word[5], '/') == NULL && strchr (word[5], '\\') == NULL)
-#else
 			if (strchr (word[5], '/') == NULL)
-#endif
 				sound_play (word[5], TRUE);
 			return;
 		}

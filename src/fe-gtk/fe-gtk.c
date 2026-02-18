@@ -22,12 +22,7 @@
 
 #include "fe-gtk.h"
 
-#ifdef WIN32
-#include <gdk/gdkwin32.h>
-#include <windows.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "../common/hexchat.h"
 #include "../common/fe.h"
@@ -64,9 +59,7 @@ GdkPixmap *channelwin_pix;
 static ca_context *ca_con;
 #endif
 
-#ifdef HAVE_GTK_MAC
-GtkosxApplication *osx_app;
-#endif
+
 
 /* === command-line parameter parsing : requires glib 2.6 === */
 
@@ -94,25 +87,7 @@ static const GOptionEntry gopt_entries[] =
  {NULL}
 };
 
-#ifdef WIN32
-static void
-create_msg_dialog (gchar *title, gchar *message)
-{
-	GtkWidget *dialog;
 
-	dialog = gtk_message_dialog_new (NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_CLOSE, "%s", message);
-	gtk_window_set_title (GTK_WINDOW (dialog), title);
-
-/* On Win32 we automatically have the icon. If we try to load it explicitly, it will look ugly for some reason. */
-#ifndef WIN32
-	pixmaps_init ();
-	gtk_window_set_icon (GTK_WINDOW (dialog), pix_hexchat);
-#endif
-
-	gtk_dialog_run (GTK_DIALOG (dialog));
-	gtk_widget_destroy (dialog);
-}
-#endif
 
 int
 fe_args (int argc, char *argv[])
@@ -128,64 +103,23 @@ fe_args (int argc, char *argv[])
 #endif
 
 	context = g_option_context_new (NULL);
-#ifdef WIN32
-	g_option_context_set_help_enabled (context, FALSE);	/* disable stdout help as stdout is unavailable for subsystem:windows */
-#endif
 	g_option_context_add_main_entries (context, gopt_entries, GETTEXT_PACKAGE);
 	g_option_context_add_group (context, gtk_get_option_group (FALSE));
 	g_option_context_parse (context, &argc, &argv, &error);
 
-#ifdef WIN32
-	if (error)											/* workaround for argv not being available when using subsystem:windows */
-	{
-		if (error->message)								/* the error message contains argv so search for patterns in that */
-		{
-			if (strstr (error->message, "--help-all") != NULL)
-			{
-				buffer = g_option_context_get_help (context, FALSE, NULL);
-				gtk_init (&argc, &argv);
-				create_msg_dialog ("Long Help", buffer);
-				g_free (buffer);
-				return 0;
-			}
-			else if (strstr (error->message, "--help") != NULL || strstr (error->message, "-?") != NULL)
-			{
-				buffer = g_option_context_get_help (context, TRUE, NULL);
-				gtk_init (&argc, &argv);
-				create_msg_dialog ("Help", buffer);
-				g_free (buffer);
-				return 0;
-			}
-			else 
-			{
-				buffer = g_strdup_printf ("%s\n", error->message);
-				gtk_init (&argc, &argv);
-				create_msg_dialog ("Error", buffer);
-				g_free (buffer);
-				return 1;
-			}
-		}
-	}
-#else
 	if (error)
 	{
 		if (error->message)
 			printf ("%s\n", error->message);
 		return 1;
 	}
-#endif
 
 	g_option_context_free (context);
 
 	if (arg_show_version)
 	{
 		buffer = g_strdup_printf ("%s %s", PACKAGE_NAME, PACKAGE_VERSION);
-#ifdef WIN32
-		gtk_init (&argc, &argv);
-		create_msg_dialog ("Version Information", buffer);
-#else
 		puts (buffer);
-#endif
 		g_free (buffer);
 
 		return 0;
@@ -194,12 +128,7 @@ fe_args (int argc, char *argv[])
 	if (arg_show_autoload)
 	{
 		buffer = g_strdup_printf ("%s%caddons%c", get_xdir(), G_DIR_SEPARATOR, G_DIR_SEPARATOR);
-#ifdef WIN32
-		gtk_init (&argc, &argv);
-		create_msg_dialog ("Plugin/Script Auto-load Directory", buffer);
-#else
 		puts (buffer);
-#endif
 		g_free (buffer);
 
 		return 0;
@@ -208,41 +137,13 @@ fe_args (int argc, char *argv[])
 	if (arg_show_config)
 	{
 		buffer = g_strdup_printf ("%s%c", get_xdir(), G_DIR_SEPARATOR);
-#ifdef WIN32
-		gtk_init (&argc, &argv);
-		create_msg_dialog ("User Config Directory", buffer);
-#else
 		puts (buffer);
-#endif
 		g_free (buffer);
 
 		return 0;
 	}
 
-#ifdef WIN32
-	/* this is mainly for irc:// URL handling. When windows calls us from */
-	/* I.E, it doesn't give an option of "Start in" directory, like short */
-	/* cuts can. So we have to set the current dir manually, to the path  */
-	/* of the exe. */
-	{
-		char *tmp = g_strdup (argv[0]);
-		char *sl;
-
-		sl = strrchr (tmp, G_DIR_SEPARATOR);
-		if (sl)
-		{
-			*sl = 0;
-			chdir (tmp);
-		}
-		g_free (tmp);
-	}
-#endif
-
 	gtk_init (&argc, &argv);
-
-#ifdef HAVE_GTK_MAC
-	osx_app = g_object_new(GTKOSX_TYPE_APPLICATION, NULL);
-#endif
 
 	return -1;
 }
@@ -320,30 +221,13 @@ fe_init (void)
 	key_init ();
 	pixmaps_init ();
 
-#ifdef HAVE_GTK_MAC
-	gtkosx_application_set_dock_icon_pixbuf (osx_app, pix_hexchat);
-#endif
 	channelwin_pix = pixmap_load_from_file (prefs.hex_text_background);
 	input_style = create_input_style (gtk_style_new ());
 }
 
-#ifdef HAVE_GTK_MAC
-static void
-gtkosx_application_terminate (GtkosxApplication *app, gpointer userdata)
-{
-	hexchat_exit();
-}
-#endif
-
 void
 fe_main (void)
 {
-#ifdef HAVE_GTK_MAC
-	gtkosx_application_ready(osx_app);
-	g_signal_connect (G_OBJECT(osx_app), "NSApplicationWillTerminate",
-					G_CALLBACK(gtkosx_application_terminate), NULL);
-#endif
-
 	gtk_main ();
 
 	/* sleep for 2 seconds so any QUIT messages are not lost. The  */
@@ -383,29 +267,7 @@ fe_timeout_remove (int tag)
 	g_source_remove (tag);
 }
 
-#ifdef WIN32
 
-static void
-log_handler (const gchar   *log_domain,
-		       GLogLevelFlags log_level,
-		       const gchar   *message,
-		       gpointer	      unused_data)
-{
-	session *sess;
-
-	/* if (getenv ("HEXCHAT_WARNING_IGNORE")) this gets ignored sometimes, so simply just disable all warnings */
-		return;
-
-	sess = find_dialog (serv_list->data, "(warnings)");
-	if (!sess)
-		sess = new_ircwindow (serv_list->data, "(warnings)", SESS_DIALOG, 0);
-
-	PrintTextf (sess, "%s\t%s\n", log_domain, message);
-	if (getenv ("HEXCHAT_WARNING_ABORT"))
-		abort ();
-}
-
-#endif
 
 /* install tray stuff */
 
@@ -442,13 +304,6 @@ fe_new_window (session *sess, int focus)
 	}
 
 	mg_changui_new (sess, NULL, tab, focus);
-
-#ifdef WIN32
-	g_log_set_handler ("GLib", G_LOG_LEVEL_CRITICAL|G_LOG_LEVEL_WARNING, (GLogFunc)log_handler, 0);
-	g_log_set_handler ("GLib-GObject", G_LOG_LEVEL_CRITICAL|G_LOG_LEVEL_WARNING, (GLogFunc)log_handler, 0);
-	g_log_set_handler ("Gdk", G_LOG_LEVEL_CRITICAL|G_LOG_LEVEL_WARNING, (GLogFunc)log_handler, 0);
-	g_log_set_handler ("Gtk", G_LOG_LEVEL_CRITICAL|G_LOG_LEVEL_WARNING, (GLogFunc)log_handler, 0);
-#endif
 
 	if (!sess_list->next)
 		g_idle_add (fe_idle, NULL);
@@ -505,14 +360,7 @@ fe_input_add (int sok, int flags, void *func, void *data)
 	int tag, type = 0;
 	GIOChannel *channel;
 
-#ifdef WIN32
-	if (flags & FIA_FD)
-		channel = g_io_channel_win32_new_fd (sok);
-	else
-		channel = g_io_channel_win32_new_socket (sok);
-#else
 	channel = g_io_channel_unix_new (sok);
-#endif
 
 	if (flags & FIA_READ)
 		type |= G_IO_IN | G_IO_HUP | G_IO_ERR;
@@ -676,16 +524,6 @@ fe_print_text (struct session *sess, char *text, time_t stamp,
 void
 fe_beep (session *sess)
 {
-#ifdef WIN32
-	/* Play the "Instant Message Notification" system sound
-	 */
-	if (!PlaySoundW (L"Notification.IM", NULL, SND_ALIAS | SND_ASYNC))
-	{
-		/* The user does not have the "Instant Message Notification" sound set. Fall back to system beep.
-		 */
-		Beep (1000, 50);
-	}
-#else
 #ifdef USE_LIBCANBERRA
 	if (ca_con == NULL)
 	{
@@ -699,7 +537,6 @@ fe_beep (session *sess)
 	if (ca_context_play (ca_con, 0, CA_PROP_EVENT_ID, "message-new-instant", NULL) != 0)
 #endif
 	gdk_beep ();
-#endif
 }
 
 void
@@ -937,11 +774,7 @@ fe_gui_info_ptr (session *sess, int info_type)
 	switch (info_type)
 	{
 	case 0:	/* native window pointer (for plugins) */
-#ifdef WIN32
-		return gdk_win32_window_get_impl_hwnd (gtk_widget_get_window (sess->gui->window));
-#else
 		return sess->gui->window;
-#endif
 		break;
 
 	case 1:	/* GtkWindow * (for plugins) */
@@ -999,61 +832,6 @@ fe_set_inputbox_contents (session *sess, char *text)
 	}
 }
 
-#ifdef __APPLE__
-static char *
-url_escape_hostname (const char *url)
-{
-    char *host_start, *host_end, *ret, *hostname;
-
-    host_start = strstr (url, "://");
-    if (host_start != NULL)
-    {
-        *host_start = '\0';
-        host_start += 3;
-        host_end = strchr (host_start, '/');
-
-        if (host_end != NULL)
-        {
-            *host_end = '\0';
-            host_end++;
-        }
-
-        hostname = g_hostname_to_ascii (host_start);
-        if (host_end != NULL)
-            ret = g_strdup_printf ("%s://%s/%s", url, hostname, host_end);
-        else
-            ret = g_strdup_printf ("%s://%s", url, hostname);
-
-        g_free (hostname);
-        return ret;
-    }
-
-    return g_strdup (url);
-}
-
-static void
-osx_show_uri (const char *url)
-{
-    char *escaped_url, *encoded_url, *open, *cmd;
-
-    escaped_url = url_escape_hostname (url);
-    encoded_url = g_filename_from_utf8 (escaped_url, -1, NULL, NULL, NULL);
-    if (encoded_url)
-    {
-        open = g_find_program_in_path ("open");
-        cmd = g_strjoin (" ", open, encoded_url, NULL);
-
-        hexchat_exec (cmd);
-
-        g_free (encoded_url);
-        g_free (cmd);
-    }
-
-    g_free (escaped_url);
-}
-
-#endif
-
 static inline char *
 escape_uri (const char *uri)
 {
@@ -1096,25 +874,10 @@ maybe_escape_uri (const char *uri)
 static void
 fe_open_url_inner (const char *url)
 {
-#ifdef WIN32
-	gunichar2 *url_utf16 = g_utf8_to_utf16 (url, -1, NULL, NULL, NULL);
-
-	if (url_utf16 == NULL)
-	{
-		return;
-	}
-
-	ShellExecuteW (0, L"open", url_utf16, NULL, NULL, SW_SHOWNORMAL);
-
-	g_free (url_utf16);
-#elif defined(__APPLE__)
-    osx_show_uri (url);
-#else
 	char *escaped_url = maybe_escape_uri (url);
 	g_debug ("Opening URL \"%s\" (%s)", escaped_url, url);
 	gtk_show_uri (NULL, escaped_url, GDK_CURRENT_TIME, NULL);
 	g_free (escaped_url);
-#endif
 }
 
 void
@@ -1126,13 +889,9 @@ fe_open_url (const char *url)
 	/* gvfs likes file:// */
 	if (url_type == WORD_PATH)
 	{
-#ifndef WIN32
 		uri = g_strconcat ("file://", url, NULL);
 		fe_open_url_inner (uri);
 		g_free (uri);
-#else
-		fe_open_url_inner (url);
-#endif
 	}
 	/* IPv6 addr. Add http:// */
 	else if (url_type == WORD_HOST6)
@@ -1227,16 +986,5 @@ fe_open_chan_list (server *serv, char *filter, int do_refresh)
 const char *
 fe_get_default_font (void)
 {
-#ifdef WIN32
-	if (gtkutil_find_font ("Consolas"))
-		return "Consolas 10";
-	else
-#else
-#ifdef __APPLE__
-	if (gtkutil_find_font ("Menlo"))
-		return "Menlo 13";
-	else
-#endif
-#endif
-		return NULL;
+	return NULL;
 }

@@ -32,18 +32,9 @@
 #include <sys/stat.h>
 #include "sexy-iso-codes.h"
 
-#ifdef WIN32
-#include "marshal.h"
-#else
 #include "../common/marshal.h"
-#endif
 
-#ifdef WIN32
-#include "../common/typedef.h"
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "../common/cfgfiles.h"
 #include "../common/hexchatc.h"
@@ -161,16 +152,10 @@ initialize_enchant (void)
 	gpointer funcptr;
     gsize i;
     const char * const libnames[] = {
-#ifdef G_OS_WIN32
-        "libenchant.dll",
-#endif
 #ifdef G_OS_UNIX
         "libenchant.so.1",
         "libenchant.so.2",
         "libenchant-2.so.2",
-#endif
-#ifdef __APPLE__
-        "libenchant.dylib",
 #endif
     };
 

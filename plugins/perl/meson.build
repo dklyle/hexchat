@@ -88,5 +88,4 @@ shared_module('perl',
   install_dir: plugindir,
   install_rpath: perl_rpath,
   name_prefix: '',
-  vs_module_defs: 'perl.def',
 )

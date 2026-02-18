@@ -38,11 +38,7 @@
 #include "../common/hexchatc.h"
 #include "../common/url.h"
 
-#ifdef WIN32
-#include "marshal.h"
-#else
 #include "../common/marshal.h"
-#endif
 
 #include "fe-gtk.h"
 #include "xtext.h"
@@ -50,16 +46,9 @@
 
 #define charlen(str) g_utf8_skip[*(guchar *)(str)]
 
-#ifdef WIN32
-#include <windows.h>
-#include <io.h>
-#include <gdk/gdk.h>
-#include <gdk/gdkwin32.h>
-#else
 #include <unistd.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
-#endif
 #endif
 
 /* is delimiter */
@@ -2066,10 +2055,8 @@ gtk_xtext_button_press (GtkWidget * widget, GdkEventButton * event)
 static gboolean
 gtk_xtext_selection_kill (GtkXText *xtext, GdkEventSelection *event)
 {
-#ifndef WIN32
 	if (xtext->buffer->last_ent_start)
 		gtk_xtext_unselect (xtext);
-#endif
 	return TRUE;
 }
 
@@ -3836,7 +3823,6 @@ gtk_xtext_render_page (GtkXText * xtext)
 	overlap = xtext->buffer->last_pixel_pos - pos;
 	xtext->buffer->last_pixel_pos = pos;
 
-#ifndef __APPLE__
 	if (!xtext->pixmap && abs (overlap) < height)
 	{
 		GdkRectangle area;
@@ -3871,7 +3857,6 @@ gtk_xtext_render_page (GtkXText * xtext)
 
 		return;
 	}
-#endif
 
 	width -= MARGIN;
 	lines_max = ((height + xtext->pixel_offset) / xtext->fontsize) + 1;

@@ -5,6 +5,9 @@ option('gtk-frontend', type: 'boolean',
 option('text-frontend', type: 'boolean', value: false,
   description: 'Text interface (not generally useful)'
 )
+option('gtk4-frontend', type: 'boolean', value: false,
+  description: 'GTK4/libadwaita graphical interface with native Wayland support'
+)
 option('theme-manager', type: 'boolean', value: false,
   description: 'Utility to help manage themes, requires mono/.net'
 )

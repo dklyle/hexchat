@@ -22,6 +22,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#ifdef WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <adwaita.h>
 
@@ -71,9 +80,19 @@ static void show_notification (const char *title, const char *body);
 #define ATTR_STRIKETHROUGH '\036'
 #define ATTR_UNDERLINE   '\037'
 
-/* mIRC color palette (16 colors + extended 99 colors) */
-/* These are standard mIRC colors as RGB hex values */
-static const char *mirc_colors[] = {
+/* ===== Color Palette =====
+ *
+ * The palette matches the GTK2 xtext/palette architecture:
+ *   0-15  : mIRC theme colors (customizable per scheme)
+ *   16-31 : "Local" colors - mirrors of 0-15, used by text events (%C18 etc.)
+ *   32-41 : Special UI colors (see COL_* defines in fe-gtk4.h)
+ *
+ * Color indices > COL_MAX wrap with (index % MIRC_COLS).
+ * mIRC color code 99 is treated as "default" (maps to COL_FG / COL_BG).
+ */
+
+/* Default mIRC colors 0-15 (standard mIRC spec, used when no scheme is active) */
+static const char *mirc_default_colors[16] = {
 	"#FFFFFF", /* 0 white */
 	"#000000", /* 1 black */
 	"#00007F", /* 2 blue (navy) */
@@ -90,99 +109,18 @@ static const char *mirc_colors[] = {
 	"#FF00FF", /* 13 pink (light purple) */
 	"#7F7F7F", /* 14 grey */
 	"#D2D2D2", /* 15 light grey */
-	/* Extended colors 16-98 follow the extended mIRC palette */
-	"#470000", /* 16 */
-	"#472100", /* 17 */
-	"#474700", /* 18 */
-	"#324700", /* 19 */
-	"#004700", /* 20 */
-	"#00472C", /* 21 */
-	"#004747", /* 22 */
-	"#002747", /* 23 */
-	"#000047", /* 24 */
-	"#2E0047", /* 25 */
-	"#470047", /* 26 */
-	"#47002A", /* 27 */
-	"#740000", /* 28 */
-	"#743A00", /* 29 */
-	"#747400", /* 30 */
-	"#517400", /* 31 */
-	"#007400", /* 32 */
-	"#007449", /* 33 */
-	"#007474", /* 34 */
-	"#004074", /* 35 */
-	"#000074", /* 36 */
-	"#4B0074", /* 37 */
-	"#740074", /* 38 */
-	"#740045", /* 39 */
-	"#B50000", /* 40 */
-	"#B56300", /* 41 */
-	"#B5B500", /* 42 */
-	"#7DB500", /* 43 */
-	"#00B500", /* 44 */
-	"#00B571", /* 45 */
-	"#00B5B5", /* 46 */
-	"#0063B5", /* 47 */
-	"#0000B5", /* 48 */
-	"#7500B5", /* 49 */
-	"#B500B5", /* 50 */
-	"#B5006B", /* 51 */
-	"#FF0000", /* 52 */
-	"#FF8C00", /* 53 */
-	"#FFFF00", /* 54 */
-	"#B2FF00", /* 55 */
-	"#00FF00", /* 56 */
-	"#00FFA0", /* 57 */
-	"#00FFFF", /* 58 */
-	"#008CFF", /* 59 */
-	"#0000FF", /* 60 */
-	"#A500FF", /* 61 */
-	"#FF00FF", /* 62 */
-	"#FF0098", /* 63 */
-	"#FF5959", /* 64 */
-	"#FFB459", /* 65 */
-	"#FFFF71", /* 66 */
-	"#CFFF60", /* 67 */
-	"#6FFF6F", /* 68 */
-	"#65FFC9", /* 69 */
-	"#6DFFFF", /* 70 */
-	"#59B4FF", /* 71 */
-	"#5959FF", /* 72 */
-	"#C459FF", /* 73 */
-	"#FF66FF", /* 74 */
-	"#FF59BC", /* 75 */
-	"#FF9C9C", /* 76 */
-	"#FFD39C", /* 77 */
-	"#FFFF9C", /* 78 */
-	"#E2FF9C", /* 79 */
-	"#9CFF9C", /* 80 */
-	"#9CFFDB", /* 81 */
-	"#9CFFFF", /* 82 */
-	"#9CD3FF", /* 83 */
-	"#9C9CFF", /* 84 */
-	"#DC9CFF", /* 85 */
-	"#FF9CFF", /* 86 */
-	"#FF94D3", /* 87 */
-	"#000000", /* 88 */
-	"#131313", /* 89 */
-	"#282828", /* 90 */
-	"#363636", /* 91 */
-	"#4D4D4D", /* 92 */
-	"#656565", /* 93 */
-	"#818181", /* 94 */
-	"#9F9F9F", /* 95 */
-	"#BCBCBC", /* 96 */
-	"#E2E2E2", /* 97 */
-	"#FFFFFF", /* 98 */
 };
-#define MIRC_COLORS_COUNT (sizeof(mirc_colors) / sizeof(mirc_colors[0]))
 
-/* ===== Color Scheme Definitions ===== */
-/* Ported from src/fe-gtk/palette.c, converted from 16-bit GdkColor to 8-bit CSS hex.
- * Each scheme defines 16 mIRC colors (indices 0-15). */
+/* ===== Color Scheme Definitions =====
+ * Ported from src/fe-gtk/palette.c, converted from 16-bit GdkColor to 8-bit CSS hex.
+ * Each scheme defines all 42 palette entries:
+ *   0-15  : mIRC theme colors
+ *   16-31 : Local colors (mirrors of 0-15, used by text events)
+ *   32-41 : Special UI colors */
 
 /* Default scheme (Tango-inspired light theme) */
-static const char *scheme_default[16] = {
+static const char *scheme_default[PALETTE_SIZE] = {
+	/* mIRC colors 0-15 */
 	"#D3D7CF", /* 0 white */
 	"#2E3436", /* 1 black */
 	"#3465A4", /* 2 blue */
@@ -199,10 +137,39 @@ static const char *scheme_default[16] = {
 	"#A04265", /* 13 light purple */
 	"#555753", /* 14 grey */
 	"#888A85", /* 15 light grey */
+	/* Local colors 16-31 (copy of 0-15) */
+	"#D3D7CF", /* 16 white */
+	"#2E3436", /* 17 black */
+	"#3465A4", /* 18 blue */
+	"#4E9A06", /* 19 green */
+	"#CC0000", /* 20 red */
+	"#8F3902", /* 21 light red */
+	"#5C3566", /* 22 purple */
+	"#CE5C00", /* 23 orange */
+	"#C4A000", /* 24 yellow */
+	"#73D216", /* 25 green */
+	"#11A879", /* 26 aqua */
+	"#58A19D", /* 27 light aqua */
+	"#57799E", /* 28 blue */
+	"#A04265", /* 29 light purple */
+	"#555753", /* 30 grey */
+	"#888A85", /* 31 light grey */
+	/* Special colors 32-41 */
+	"#D3D7CF", /* 32 marktext Fore (white) */
+	"#204A87", /* 33 marktext Back (blue) */
+	"#2529E8", /* 34 foreground */
+	"#FAF8F8", /* 35 background */
+	"#8F3902", /* 36 marker line (brown) */
+	"#3465A4", /* 37 tab New Data (blue) */
+	"#4E9A06", /* 38 tab Nick Mentioned (green) */
+	"#CE5C00", /* 39 tab New Message (orange) */
+	"#888A85", /* 40 away user (grey) */
+	"#A40000", /* 41 spell checker (red) */
 };
 
 /* Dark scheme */
-static const char *scheme_dark[16] = {
+static const char *scheme_dark[PALETTE_SIZE] = {
+	/* mIRC colors 0-15 */
 	"#D3D7CF", /* 0 white */
 	"#2E3436", /* 1 black */
 	"#5799FF", /* 2 blue */
@@ -219,10 +186,39 @@ static const char *scheme_dark[16] = {
 	"#FF55FF", /* 13 light purple */
 	"#7F7F7F", /* 14 grey */
 	"#D0D0D0", /* 15 light grey */
+	/* Local colors 16-31 */
+	"#D3D7CF", /* 16 white */
+	"#2E3436", /* 17 black */
+	"#5799FF", /* 18 blue */
+	"#7AC936", /* 19 green */
+	"#FF5555", /* 20 red */
+	"#CF6A4C", /* 21 light red */
+	"#AD7FA8", /* 22 purple */
+	"#FFAA00", /* 23 orange */
+	"#FFFF55", /* 24 yellow */
+	"#55FF55", /* 25 light green */
+	"#00D3D3", /* 26 aqua */
+	"#8CE8E8", /* 27 light aqua */
+	"#5555FF", /* 28 light blue */
+	"#FF55FF", /* 29 light purple */
+	"#7F7F7F", /* 30 grey */
+	"#D0D0D0", /* 31 light grey */
+	/* Special colors 32-41 */
+	"#D3D7CF", /* 32 marktext Fore */
+	"#406090", /* 33 marktext Back */
+	"#D0D0D0", /* 34 foreground (light grey) */
+	"#1E1E2E", /* 35 background (dark) */
+	"#FF5555", /* 36 marker line (red) */
+	"#5799FF", /* 37 tab New Data (blue) */
+	"#7AC936", /* 38 tab Nick Mentioned (green) */
+	"#FFAA00", /* 39 tab New Message (orange) */
+	"#7F7F7F", /* 40 away user (grey) */
+	"#FF5555", /* 41 spell checker (red) */
 };
 
 /* Monokai scheme */
-static const char *scheme_monokai[16] = {
+static const char *scheme_monokai[PALETTE_SIZE] = {
+	/* mIRC colors 0-15 */
 	"#F8F8F2", /* 0 white */
 	"#272822", /* 1 black */
 	"#66D9EF", /* 2 blue */
@@ -239,10 +235,39 @@ static const char *scheme_monokai[16] = {
 	"#AE81FF", /* 13 light purple */
 	"#75715E", /* 14 grey */
 	"#A59F85", /* 15 light grey */
+	/* Local colors 16-31 */
+	"#F8F8F2", /* 16 white */
+	"#272822", /* 17 black */
+	"#66D9EF", /* 18 blue */
+	"#A6E22E", /* 19 green */
+	"#F92672", /* 20 red */
+	"#FD971F", /* 21 orange */
+	"#AE81FF", /* 22 purple */
+	"#FD971F", /* 23 orange */
+	"#E6DB74", /* 24 yellow */
+	"#A6E22E", /* 25 light green */
+	"#A1EFE4", /* 26 aqua */
+	"#66D9EF", /* 27 light aqua */
+	"#66D9EF", /* 28 light blue */
+	"#AE81FF", /* 29 light purple */
+	"#75715E", /* 30 grey */
+	"#A59F85", /* 31 light grey */
+	/* Special colors 32-41 */
+	"#F8F8F2", /* 32 marktext Fore */
+	"#49483E", /* 33 marktext Back */
+	"#F8F8F2", /* 34 foreground */
+	"#272822", /* 35 background */
+	"#F92672", /* 36 marker line (pink) */
+	"#66D9EF", /* 37 tab New Data (blue) */
+	"#A6E22E", /* 38 tab Nick Mentioned (green) */
+	"#FD971F", /* 39 tab New Message (orange) */
+	"#75715E", /* 40 away user (grey) */
+	"#F92672", /* 41 spell checker (pink) */
 };
 
 /* Solarized Dark scheme */
-static const char *scheme_solarized_dark[16] = {
+static const char *scheme_solarized_dark[PALETTE_SIZE] = {
+	/* mIRC colors 0-15 */
 	"#FDF6E3", /* 0 base3 */
 	"#002B36", /* 1 base03 */
 	"#268BD2", /* 2 blue */
@@ -259,10 +284,39 @@ static const char *scheme_solarized_dark[16] = {
 	"#6C71C4", /* 13 violet */
 	"#586E75", /* 14 base01 */
 	"#839496", /* 15 base0 */
+	/* Local colors 16-31 */
+	"#FDF6E3", /* 16 */
+	"#002B36", /* 17 */
+	"#268BD2", /* 18 */
+	"#859900", /* 19 */
+	"#DC322F", /* 20 */
+	"#CB4B16", /* 21 */
+	"#D33682", /* 22 */
+	"#CB4B16", /* 23 */
+	"#B58900", /* 24 */
+	"#859900", /* 25 */
+	"#2AA198", /* 26 */
+	"#2AA198", /* 27 */
+	"#268BD2", /* 28 */
+	"#6C71C4", /* 29 */
+	"#586E75", /* 30 */
+	"#839496", /* 31 */
+	/* Special colors 32-41 */
+	"#93A1A1", /* 32 marktext Fore (base1) */
+	"#073642", /* 33 marktext Back (base02) */
+	"#839496", /* 34 foreground (base0) */
+	"#002B36", /* 35 background (base03) */
+	"#DC322F", /* 36 marker line (red) */
+	"#268BD2", /* 37 tab New Data (blue) */
+	"#859900", /* 38 tab Nick Mentioned (green) */
+	"#CB4B16", /* 39 tab New Message (orange) */
+	"#586E75", /* 40 away user (base01) */
+	"#DC322F", /* 41 spell checker (red) */
 };
 
 /* Solarized Light scheme */
-static const char *scheme_solarized_light[16] = {
+static const char *scheme_solarized_light[PALETTE_SIZE] = {
+	/* mIRC colors 0-15 */
 	"#FDF6E3", /* 0 base3 */
 	"#002B36", /* 1 base03 */
 	"#268BD2", /* 2 blue */
@@ -279,6 +333,34 @@ static const char *scheme_solarized_light[16] = {
 	"#6C71C4", /* 13 violet */
 	"#586E75", /* 14 base01 */
 	"#839496", /* 15 base0 */
+	/* Local colors 16-31 */
+	"#FDF6E3", /* 16 */
+	"#002B36", /* 17 */
+	"#268BD2", /* 18 */
+	"#859900", /* 19 */
+	"#DC322F", /* 20 */
+	"#CB4B16", /* 21 */
+	"#D33682", /* 22 */
+	"#CB4B16", /* 23 */
+	"#B58900", /* 24 */
+	"#859900", /* 25 */
+	"#2AA198", /* 26 */
+	"#2AA198", /* 27 */
+	"#268BD2", /* 28 */
+	"#6C71C4", /* 29 */
+	"#586E75", /* 30 */
+	"#839496", /* 31 */
+	/* Special colors 32-41 */
+	"#586E75", /* 32 marktext Fore (base01) */
+	"#EEE8D5", /* 33 marktext Back (base2) */
+	"#657B83", /* 34 foreground (base00) */
+	"#FDF6E3", /* 35 background (base3) */
+	"#DC322F", /* 36 marker line (red) */
+	"#268BD2", /* 37 tab New Data (blue) */
+	"#859900", /* 38 tab Nick Mentioned (green) */
+	"#CB4B16", /* 39 tab New Message (orange) */
+	"#93A1A1", /* 40 away user (base1) */
+	"#DC322F", /* 41 spell checker (red) */
 };
 
 /* Array of scheme pointers (index 0 = Custom = NULL) */
@@ -292,41 +374,51 @@ static const char **color_schemes[] = {
 };
 #define COLOR_SCHEME_COUNT (sizeof(color_schemes) / sizeof(color_schemes[0]))
 
-/* Mutable live color array for mIRC colors 0-15.
- * Initialized to the standard mIRC palette; overwritten by palette_apply_scheme().
- * Colors 16-98 always come from the static mirc_colors[] extended palette. */
-static char live_colors[16][8];  /* "#RRGGBB\0" */
+/* Mutable live color array for the full 42-entry palette.
+ * Initialized from mirc_default_colors (0-15) + default scheme (16-41).
+ * Overwritten by palette_apply_scheme(). */
+static char live_colors[PALETTE_SIZE][8];  /* "#RRGGBB\0" */
 static gboolean live_colors_initialized = FALSE;
 
-/* Initialize live_colors from the static mirc_colors defaults */
+/* Initialize live_colors from the defaults */
 static void
 live_colors_init (void)
 {
 	int i;
 	if (live_colors_initialized)
 		return;
+
+	/* 0-15: standard mIRC defaults */
 	for (i = 0; i < 16; i++)
-		g_strlcpy (live_colors[i], mirc_colors[i], 8);
+		g_strlcpy (live_colors[i], mirc_default_colors[i], 8);
+	/* 16-31: mirror of 0-15 */
+	for (i = 0; i < 16; i++)
+		g_strlcpy (live_colors[16 + i], mirc_default_colors[i], 8);
+	/* 32-41: special UI colors from the default scheme */
+	for (i = 32; i < PALETTE_SIZE; i++)
+		g_strlcpy (live_colors[i], scheme_default[i], 8);
+
 	live_colors_initialized = TRUE;
 }
 
-/* Get the color string for a given mIRC color index (0-98) */
+/* Get the color string for a given color index.
+ * Indices 0-41 come from live_colors[].
+ * Index 99 maps to COL_FG (default foreground) / COL_BG (default background).
+ * Indices > COL_MAX wrap with (index % 32). */
 static const char *
 get_color (int index)
 {
 	if (index < 0)
 		return "#000000";
-	if (index < 16)
-	{
-		live_colors_init ();
-		return live_colors[index];
-	}
-	if (index < (int)MIRC_COLORS_COUNT)
-		return mirc_colors[index];
-	return "#000000";
+	if (index == 99)
+		return live_colors[COL_FG];  /* mIRC "default" color */
+	if (index > COL_MAX)
+		index = index % MIRC_COLS;
+	live_colors_init ();
+	return live_colors[index];
 }
 
-/* Apply a color scheme to the live palette (colors 0-15 only).
+/* Apply a color scheme to the full palette (all 42 entries).
  * scheme 0 = Custom (no-op), 1-5 = predefined schemes. */
 void
 palette_apply_scheme (int scheme)
@@ -342,29 +434,125 @@ palette_apply_scheme (int scheme)
 		return;
 
 	live_colors_init ();
-	for (i = 0; i < 16; i++)
+	for (i = 0; i < PALETTE_SIZE; i++)
 		g_strlcpy (live_colors[i], scheme_colors[i], 8);
 }
 
-/* Get the current color string for a given mIRC color index (0-15).
- * Returns a "#RRGGBB" string.  For indices outside 0-15 returns "#000000". */
+/* Get the current color string for a given palette index.
+ * Returns a "#RRGGBB" string. */
 const char *
 palette_get_color (int index)
 {
 	return get_color (index);
 }
 
-/* Set a single live color (0-15) to a new "#RRGGBB" value and refresh all
- * open sessions so the change is visible immediately. */
+/* Set a single live color to a new "#RRGGBB" value and refresh all
+ * open sessions so the change is visible immediately.
+ * For mIRC colors 0-15, also mirrors the change to 16-31. */
 void
 palette_set_color (int index, const char *hex_color)
 {
-	if (index < 0 || index >= 16 || !hex_color)
+	if (index < 0 || index >= PALETTE_SIZE || !hex_color)
 		return;
 
 	live_colors_init ();
 	g_strlcpy (live_colors[index], hex_color, 8);
+
+	/* Keep 16-31 in sync with 0-15 */
+	if (index < 16)
+		g_strlcpy (live_colors[index + 16], hex_color, 8);
+	else if (index >= 16 && index < 32)
+		g_strlcpy (live_colors[index - 16], hex_color, 8);
+
 	palette_refresh_all ();
+}
+
+/* Load palette from colors.conf (compatible with GTK2 format).
+ * File format: "color_N = RRRR GGGG BBBB" where values are 16-bit hex.
+ * Indices 0-31 map directly; special colors 32-41 are stored as 256-265. */
+void
+palette_load (void)
+{
+	int i, j, fh;
+	char prefname[256];
+	struct stat st;
+	char *cfg;
+	guint16 red, green, blue;
+
+	live_colors_init ();
+
+	fh = hexchat_open_file ("colors.conf", O_RDONLY, 0, 0);
+	if (fh == -1)
+		return;
+
+	if (fstat (fh, &st) != 0 || st.st_size == 0)
+	{
+		close (fh);
+		return;
+	}
+
+	cfg = g_malloc0 (st.st_size + 1);
+	if (read (fh, cfg, st.st_size) < 0)
+	{
+		g_free (cfg);
+		close (fh);
+		return;
+	}
+
+	/* mIRC colors 0-31 */
+	for (i = 0; i < 32; i++)
+	{
+		g_snprintf (prefname, sizeof prefname, "color_%d", i);
+		if (cfg_get_color (cfg, prefname, &red, &green, &blue))
+			g_snprintf (live_colors[i], 8, "#%02X%02X%02X",
+			            (unsigned)(red >> 8), (unsigned)(green >> 8), (unsigned)(blue >> 8));
+	}
+
+	/* Special colors 32-41 are stored at indices 256+ */
+	for (i = 256, j = 32; j <= COL_MAX; i++, j++)
+	{
+		g_snprintf (prefname, sizeof prefname, "color_%d", i);
+		if (cfg_get_color (cfg, prefname, &red, &green, &blue))
+			g_snprintf (live_colors[j], 8, "#%02X%02X%02X",
+			            (unsigned)(red >> 8), (unsigned)(green >> 8), (unsigned)(blue >> 8));
+	}
+
+	g_free (cfg);
+	close (fh);
+}
+
+/* Save palette to colors.conf (compatible with GTK2 format).
+ * Converts 8-bit CSS hex (#RRGGBB) to 16-bit values for cfg_put_color. */
+void
+palette_save (void)
+{
+	int i, j, fh;
+	char prefname[256];
+	unsigned int r8, g8, b8;
+
+	live_colors_init ();
+
+	fh = hexchat_open_file ("colors.conf", O_TRUNC | O_WRONLY | O_CREAT, 0600, XOF_DOMODE);
+	if (fh == -1)
+		return;
+
+	/* mIRC colors 0-31 */
+	for (i = 0; i < 32; i++)
+	{
+		g_snprintf (prefname, sizeof prefname, "color_%d", i);
+		if (sscanf (live_colors[i], "#%02X%02X%02X", &r8, &g8, &b8) == 3)
+			cfg_put_color (fh, (guint16)(r8 * 257), (guint16)(g8 * 257), (guint16)(b8 * 257), prefname);
+	}
+
+	/* Special colors 32-41 stored at indices 256+ */
+	for (i = 256, j = 32; j <= COL_MAX; i++, j++)
+	{
+		g_snprintf (prefname, sizeof prefname, "color_%d", i);
+		if (sscanf (live_colors[j], "#%02X%02X%02X", &r8, &g8, &b8) == 3)
+			cfg_put_color (fh, (guint16)(r8 * 257), (guint16)(g8 * 257), (guint16)(b8 * 257), prefname);
+	}
+
+	close (fh);
 }
 
 /* Update existing text buffer tags to reflect the current live_colors.
@@ -385,7 +573,8 @@ update_buffer_tags (GtkTextBuffer *buffer)
 
 	table = gtk_text_buffer_get_tag_table (buffer);
 
-	for (i = 0; i < MIRC_COLORS_COUNT; i++)
+	/* Update mIRC color tags 0-31 */
+	for (i = 0; i < MIRC_COLS; i++)
 	{
 		const char *color_str = get_color (i);
 
@@ -399,6 +588,58 @@ update_buffer_tags (GtkTextBuffer *buffer)
 		if (tag)
 			g_object_set (tag, "background", color_str, NULL);
 	}
+
+	/* Update special tags that use palette colors */
+	tag = gtk_text_tag_table_lookup (table, "reverse");
+	if (tag)
+		g_object_set (tag,
+		              "foreground", get_color (COL_BG),
+		              "background", get_color (COL_FG),
+		              NULL);
+
+	tag = gtk_text_tag_table_lookup (table, "highlight");
+	if (tag)
+		g_object_set (tag, "background", get_color (COL_HILIGHT), NULL);
+
+	tag = gtk_text_tag_table_lookup (table, "marker-line");
+	if (tag)
+		g_object_set (tag, "paragraph-background", get_color (COL_MARKER), NULL);
+}
+
+/* Global CSS provider for palette-driven colors (text views, input entries).
+ * Uses CSS classes instead of deprecated per-widget style contexts. */
+static GtkCssProvider *palette_css_provider = NULL;
+
+/* (Re-)generate the global palette CSS and load it into the provider.
+ * Must be called after any palette change. */
+static void
+palette_update_css (void)
+{
+	char *css;
+
+	if (!palette_css_provider)
+	{
+		palette_css_provider = gtk_css_provider_new ();
+		gtk_style_context_add_provider_for_display (
+			gdk_display_get_default (),
+			GTK_STYLE_PROVIDER (palette_css_provider),
+			GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+	}
+
+	css = g_strdup_printf (
+		".hexchat-textview text {"
+		"  color: %s;"
+		"  background-color: %s;"
+		"}"
+		".hexchat-input {"
+		"  color: %s;"
+		"  background-color: %s;"
+		"}",
+		get_color (COL_FG), get_color (COL_BG),
+		get_color (COL_FG), get_color (COL_BG));
+
+	gtk_css_provider_load_from_string (palette_css_provider, css);
+	g_free (css);
 }
 
 /* Refresh color tags on all open sessions */
@@ -409,6 +650,9 @@ palette_refresh_all (void)
 	session *sess;
 	session_gui *gui;
 
+	/* Update the global CSS provider (applies to all text views and inputs) */
+	palette_update_css ();
+
 	for (list = sess_list; list; list = list->next)
 	{
 		sess = list->data;
@@ -417,7 +661,6 @@ palette_refresh_all (void)
 			gui = sess->gui;
 			if (gui->text_buffer)
 				update_buffer_tags (gui->text_buffer);
-			/* Force GTK4 to re-render text with updated tag colors */
 			if (gui->text_view && GTK_IS_WIDGET (gui->text_view))
 				gtk_widget_queue_draw (gui->text_view);
 		}
@@ -996,6 +1239,11 @@ fe_init (void)
 	/* Create the main window now, before sessions are created */
 	create_main_window ();
 
+	/* Load custom palette from colors.conf (if it exists).
+	 * Must be called before palette_apply_scheme so saved colors
+	 * are the base and a scheme selection overrides them. */
+	palette_load ();
+
 	/* Apply saved color scheme so that sessions created after this
 	 * point will use the correct palette in fe_gtk4_init_tags(). */
 	if (prefs.hex_gui_color_scheme > 0)
@@ -1092,9 +1340,9 @@ fe_gtk4_init_tags (GtkTextBuffer *buffer)
 	guint i;
 	char tag_name[32];
 
-	/* mIRC color tags (0-98) - use live_colors for 0-15, mirc_colors for 16-98 */
+	/* mIRC color tags (0-31) - 0-15 themed, 16-31 mirrors */
 	live_colors_init ();
-	for (i = 0; i < MIRC_COLORS_COUNT; i++)
+	for (i = 0; i < MIRC_COLS; i++)
 	{
 		const char *color_str = get_color (i);
 
@@ -1128,11 +1376,11 @@ fe_gtk4_init_tags (GtkTextBuffer *buffer)
 	gtk_text_buffer_create_tag (buffer, "hidden",
 	                            NULL);
 	gtk_text_buffer_create_tag (buffer, "reverse",
-	                            "foreground", "#000000",
-	                            "background", "#FFFFFF",
+	                            "foreground", get_color (COL_BG),
+	                            "background", get_color (COL_FG),
 	                            NULL);
 
-	/* Special tags */
+	/* Special tags - use palette colors where appropriate */
 	gtk_text_buffer_create_tag (buffer, "timestamp",
 	                            "foreground", "#888888",
 	                            NULL);
@@ -1141,11 +1389,11 @@ fe_gtk4_init_tags (GtkTextBuffer *buffer)
 	                            "underline", PANGO_UNDERLINE_SINGLE,
 	                            NULL);
 	gtk_text_buffer_create_tag (buffer, "highlight",
-	                            "background", "#FFFF00",
+	                            "background", get_color (COL_HILIGHT),
 	                            NULL);
-	/* Marker line tag - a red line that marks the last read position */
+	/* Marker line tag */
 	gtk_text_buffer_create_tag (buffer, "marker-line",
-	                            "paragraph-background", "#FF3902",
+	                            "paragraph-background", get_color (COL_MARKER),
 	                            "pixels-above-lines", 2,
 	                            "pixels-below-lines", 2,
 	                            NULL);
@@ -2138,6 +2386,8 @@ fe_new_window (struct session *sess, int focus)
 	gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (gui->text_view), GTK_WRAP_WORD_CHAR);
 	gtk_text_view_set_left_margin (GTK_TEXT_VIEW (gui->text_view), 4);
 	gtk_text_view_set_right_margin (GTK_TEXT_VIEW (gui->text_view), 4);
+	gtk_widget_add_css_class (gui->text_view, "hexchat-textview");
+	palette_update_css ();
 	gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), gui->text_view);
 	gtk_box_append (GTK_BOX (text_box), scroll);
 
@@ -2159,6 +2409,7 @@ fe_new_window (struct session *sess, int focus)
 	/* Create input entry */
 	gui->input_entry = gtk_entry_new ();
 	gtk_entry_set_placeholder_text (GTK_ENTRY (gui->input_entry), "Type a message...");
+	gtk_widget_add_css_class (gui->input_entry, "hexchat-input");
 	gtk_box_append (GTK_BOX (text_box), gui->input_entry);
 
 	/* Setup input handling - activate (Enter) signal */
@@ -2502,9 +2753,11 @@ fe_print_text (struct session *sess, char *text, time_t stamp,
 					fg_color = fg_color * 10 + (*p - '0');
 					p++;
 				}
-				/* Clamp to valid range */
-				if (fg_color >= (int)MIRC_COLORS_COUNT)
-					fg_color = fg_color % 16;
+				/* Clamp to valid range (match GTK2 xtext behavior) */
+				if (fg_color == 99)
+					fg_color = -1;  /* 99 = default foreground */
+				else if (fg_color > COL_MAX)
+					fg_color = fg_color % MIRC_COLS;
 
 				/* Check for background color */
 				if (*p == ',')
@@ -2520,8 +2773,10 @@ fe_print_text (struct session *sess, char *text, time_t stamp,
 							p++;
 						}
 						/* Clamp to valid range */
-						if (bg_color >= (int)MIRC_COLORS_COUNT)
-							bg_color = bg_color % 16;
+						if (bg_color == 99)
+							bg_color = -1;  /* 99 = default background */
+						else if (bg_color > COL_MAX)
+							bg_color = bg_color % MIRC_COLS;
 					}
 				}
 			}

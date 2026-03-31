@@ -60,8 +60,27 @@ static const char * const color_names[16] = {
 	"Light Grey",     /* 15 */
 };
 
-/* State for the palette editor — kept alive while prefs window is open */
-static GtkWidget *palette_buttons[16];   /* GtkColorDialogButton per color */
+/* Special UI color labels (indices 32-41) */
+#define NUM_SPECIAL_COLORS 10
+static const struct {
+	int index;
+	const char *name;
+} special_color_info[NUM_SPECIAL_COLORS] = {
+	{ COL_FG,       "Text Foreground" },
+	{ COL_BG,       "Text Background" },
+	{ COL_MARK_FG,  "Selection Foreground" },
+	{ COL_MARK_BG,  "Selection Background" },
+	{ COL_MARKER,   "Marker Line" },
+	{ COL_NEW_DATA, "Tab: New Data" },
+	{ COL_HILIGHT,  "Tab: Highlight" },
+	{ COL_NEW_MSG,  "Tab: New Message" },
+	{ COL_AWAY,     "Away User" },
+	{ COL_SPELL,    "Spell Checker" },
+};
+
+/* State for the palette editor -- kept alive while prefs window is open */
+static GtkWidget *palette_buttons[16];               /* mIRC color buttons */
+static GtkWidget *special_buttons[NUM_SPECIAL_COLORS]; /* special UI color buttons */
 static GtkWidget *scheme_combo_row;      /* AdwComboRow for scheme selector */
 static gboolean palette_updating;        /* guard to suppress feedback loops */
 
@@ -197,6 +216,17 @@ color_scheme_pref_changed (GObject *obj, GParamSpec *pspec, gpointer user_data)
 					GTK_COLOR_DIALOG_BUTTON (palette_buttons[i]), &rgba);
 		}
 	}
+	/* Update special UI color buttons */
+	for (i = 0; i < NUM_SPECIAL_COLORS; i++)
+	{
+		if (special_buttons[i])
+		{
+			GdkRGBA rgba;
+			if (gdk_rgba_parse (&rgba, palette_get_color (special_color_info[i].index)))
+				gtk_color_dialog_button_set_rgba (
+					GTK_COLOR_DIALOG_BUTTON (special_buttons[i]), &rgba);
+		}
+	}
 	palette_updating = FALSE;
 }
 
@@ -324,6 +354,70 @@ create_palette_editor (void)
 		gtk_grid_attach (GTK_GRID (grid), button, col_base + 1, row, 1, 1);
 
 		palette_buttons[i] = button;
+	}
+
+	g_object_unref (dialog);
+
+	return grid;
+}
+
+/* Create the special UI colors editor: a grid of labeled color buttons
+ * for FG, BG, marker line, tab indicators, away, and spell colors. */
+static GtkWidget *
+create_special_colors_editor (void)
+{
+	GtkWidget *grid;
+	GtkColorDialog *dialog;
+	int i;
+
+	dialog = gtk_color_dialog_new ();
+	gtk_color_dialog_set_title (dialog, "Choose Color");
+
+	grid = gtk_grid_new ();
+	gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
+	gtk_grid_set_column_spacing (GTK_GRID (grid), 12);
+	gtk_widget_set_margin_top (grid, 8);
+	gtk_widget_set_margin_bottom (grid, 8);
+	gtk_widget_set_margin_start (grid, 8);
+	gtk_widget_set_margin_end (grid, 8);
+
+	/* Layout: 5 rows x 2 columns, each column has [label] [button] */
+	for (i = 0; i < NUM_SPECIAL_COLORS; i++)
+	{
+		GtkWidget *label;
+		GtkWidget *button;
+		GdkRGBA rgba;
+		int row, col_base;
+
+		if (i < 5)
+		{
+			row = i;
+			col_base = 0;
+		}
+		else
+		{
+			row = i - 5;
+			col_base = 2;
+		}
+
+		label = gtk_label_new (special_color_info[i].name);
+		gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+		gtk_widget_set_hexpand (label, TRUE);
+		gtk_grid_attach (GTK_GRID (grid), label, col_base, row, 1, 1);
+
+		button = gtk_color_dialog_button_new (g_object_ref (dialog));
+		gtk_widget_set_size_request (button, 40, 30);
+
+		if (gdk_rgba_parse (&rgba, palette_get_color (special_color_info[i].index)))
+			gtk_color_dialog_button_set_rgba (GTK_COLOR_DIALOG_BUTTON (button), &rgba);
+
+		g_signal_connect (button, "notify::rgba",
+		                  G_CALLBACK (palette_button_color_changed),
+		                  GINT_TO_POINTER (special_color_info[i].index));
+
+		gtk_grid_attach (GTK_GRID (grid), button, col_base + 1, row, 1, 1);
+
+		special_buttons[i] = button;
 	}
 
 	g_object_unref (dialog);
@@ -633,6 +727,7 @@ create_colors_page (void)
 	GtkWidget *group;
 	GtkWidget *row;
 	GtkWidget *palette_grid;
+	GtkWidget *special_grid;
 
 	page = adw_preferences_page_new ();
 	adw_preferences_page_set_title (ADW_PREFERENCES_PAGE (page), "Colors");
@@ -658,6 +753,16 @@ create_colors_page (void)
 
 	palette_grid = create_palette_editor ();
 	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), palette_grid);
+
+	/* Special UI Colors group */
+	group = adw_preferences_group_new ();
+	adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group), "UI Colors");
+	adw_preferences_group_set_description (ADW_PREFERENCES_GROUP (group),
+		"Foreground, background, marker, tab indicators, and other UI colors.");
+	adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (group));
+
+	special_grid = create_special_colors_editor ();
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), special_grid);
 
 	/* Text Colors group */
 	group = adw_preferences_group_new ();
@@ -692,6 +797,7 @@ create_colors_page (void)
 static void
 prefs_save_settings (void)
 {
+	palette_save ();
 	save_config ();
 }
 
@@ -707,6 +813,8 @@ prefs_window_close_cb (GtkWindow *window, gpointer user_data)
 	/* Clear palette editor state (widgets are destroyed with the window) */
 	for (i = 0; i < 16; i++)
 		palette_buttons[i] = NULL;
+	for (i = 0; i < NUM_SPECIAL_COLORS; i++)
+		special_buttons[i] = NULL;
 	scheme_combo_row = NULL;
 
 	return FALSE;  /* Allow window to close */

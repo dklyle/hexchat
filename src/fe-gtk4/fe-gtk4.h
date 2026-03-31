@@ -90,11 +90,28 @@ extern GtkWidget *content_stack;       /* GtkStack for session content */
 /* Initialization */
 void fe_gtk4_init_tags (GtkTextBuffer *buffer);
 
-/* Color palette */
+/* Color palette indices */
+#define COL_MARK_FG   32  /* Marked/selected text foreground */
+#define COL_MARK_BG   33  /* Marked/selected text background */
+#define COL_FG        34  /* Default text foreground */
+#define COL_BG        35  /* Default text background */
+#define COL_MARKER    36  /* Marker line color */
+#define COL_NEW_DATA  37  /* Tab: new data indicator */
+#define COL_HILIGHT   38  /* Tab: nick mentioned / highlight */
+#define COL_NEW_MSG   39  /* Tab: new message indicator */
+#define COL_AWAY      40  /* Away user nick color */
+#define COL_SPELL     41  /* Spell-checker underline color */
+#define COL_MAX       41  /* Highest palette index */
+#define PALETTE_SIZE  42  /* Total entries in the palette */
+#define MIRC_COLS     32  /* mIRC color indices wrap at this value */
+
+/* Color palette functions */
 void palette_apply_scheme (int scheme);
 void palette_refresh_all (void);
 const char *palette_get_color (int index);
 void palette_set_color (int index, const char *hex_color);
+void palette_load (void);
+void palette_save (void);
 
 /* Channel list */
 void chanlist_opengui (struct server *serv, int do_refresh);

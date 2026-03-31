@@ -40,6 +40,31 @@ static const char * const color_scheme_names[] = {
 	NULL
 };
 
+/* Color name labels for the 16 mIRC palette entries */
+static const char * const color_names[16] = {
+	"White",          /* 0  */
+	"Black",          /* 1  */
+	"Blue",           /* 2  */
+	"Green",          /* 3  */
+	"Red",            /* 4  */
+	"Brown",          /* 5  */
+	"Purple",         /* 6  */
+	"Orange",         /* 7  */
+	"Yellow",         /* 8  */
+	"Light Green",    /* 9  */
+	"Aqua",           /* 10 */
+	"Light Aqua",     /* 11 */
+	"Light Blue",     /* 12 */
+	"Light Purple",   /* 13 */
+	"Grey",           /* 14 */
+	"Light Grey",     /* 15 */
+};
+
+/* State for the palette editor — kept alive while prefs window is open */
+static GtkWidget *palette_buttons[16];   /* GtkColorDialogButton per color */
+static GtkWidget *scheme_combo_row;      /* AdwComboRow for scheme selector */
+static gboolean palette_updating;        /* guard to suppress feedback loops */
+
 /* Forward declarations */
 static void prefs_save_settings (void);
 
@@ -148,9 +173,63 @@ color_scheme_pref_changed (GObject *obj, GParamSpec *pspec, gpointer user_data)
 {
 	int *pref = user_data;
 	guint selected;
+	int i;
+
+	if (palette_updating)
+		return;
 
 	selected = adw_combo_row_get_selected (ADW_COMBO_ROW (obj));
 	*pref = (int)selected;
+
+	/* Apply the scheme colors and refresh all open sessions */
+	palette_apply_scheme ((int)selected);
+	palette_refresh_all ();
+
+	/* Update the 16 color buttons to reflect the new scheme */
+	palette_updating = TRUE;
+	for (i = 0; i < 16; i++)
+	{
+		if (palette_buttons[i])
+		{
+			GdkRGBA rgba;
+			if (gdk_rgba_parse (&rgba, palette_get_color (i)))
+				gtk_color_dialog_button_set_rgba (
+					GTK_COLOR_DIALOG_BUTTON (palette_buttons[i]), &rgba);
+		}
+	}
+	palette_updating = FALSE;
+}
+
+/* Callback when an individual color button changes */
+static void
+palette_button_color_changed (GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+	int index = GPOINTER_TO_INT (user_data);
+	const GdkRGBA *rgba;
+	char hex[8];
+
+	if (palette_updating)
+		return;
+
+	rgba = gtk_color_dialog_button_get_rgba (GTK_COLOR_DIALOG_BUTTON (obj));
+
+	/* Convert GdkRGBA (0.0-1.0) to "#RRGGBB" */
+	g_snprintf (hex, sizeof (hex), "#%02X%02X%02X",
+	            (int)(rgba->red   * 255.0 + 0.5),
+	            (int)(rgba->green * 255.0 + 0.5),
+	            (int)(rgba->blue  * 255.0 + 0.5));
+
+	/* Update the live color and refresh sessions */
+	palette_set_color (index, hex);
+
+	/* Switch scheme dropdown to "Custom" (index 0) since user edited a color */
+	if (scheme_combo_row)
+	{
+		palette_updating = TRUE;
+		adw_combo_row_set_selected (ADW_COMBO_ROW (scheme_combo_row), 0);
+		prefs.hex_gui_color_scheme = 0;
+		palette_updating = FALSE;
+	}
 }
 
 /* Create a combo row for color scheme selection */
@@ -176,7 +255,80 @@ create_color_scheme_row (const char *title, const char *subtitle, int *pref)
 	g_signal_connect (row, "notify::selected",
 	                  G_CALLBACK (color_scheme_pref_changed), pref);
 
+	/* Keep a reference so the palette editor can switch to "Custom" */
+	scheme_combo_row = row;
+
 	return row;
+}
+
+/* Create the palette editing grid: a 4x4 grid of color buttons with labels */
+static GtkWidget *
+create_palette_editor (void)
+{
+	GtkWidget *grid;
+	GtkColorDialog *dialog;
+	int i;
+
+	/* Shared color dialog instance */
+	dialog = gtk_color_dialog_new ();
+	gtk_color_dialog_set_title (dialog, "Choose Color");
+
+	grid = gtk_grid_new ();
+	gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
+	gtk_grid_set_column_spacing (GTK_GRID (grid), 12);
+	gtk_widget_set_margin_top (grid, 8);
+	gtk_widget_set_margin_bottom (grid, 8);
+	gtk_widget_set_margin_start (grid, 8);
+	gtk_widget_set_margin_end (grid, 8);
+
+	/* Layout: 8 rows x 2 columns, each column has [label] [button] */
+	for (i = 0; i < 16; i++)
+	{
+		GtkWidget *label;
+		GtkWidget *button;
+		GdkRGBA rgba;
+		int row, col_base;
+		char label_text[32];
+
+		/* First 8 in left columns, next 8 in right columns */
+		if (i < 8)
+		{
+			row = i;
+			col_base = 0;
+		}
+		else
+		{
+			row = i - 8;
+			col_base = 2;
+		}
+
+		/* Label: "00: White" */
+		g_snprintf (label_text, sizeof (label_text), "%d: %s", i, color_names[i]);
+		label = gtk_label_new (label_text);
+		gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+		gtk_widget_set_hexpand (label, TRUE);
+		gtk_grid_attach (GTK_GRID (grid), label, col_base, row, 1, 1);
+
+		/* Color dialog button */
+		button = gtk_color_dialog_button_new (g_object_ref (dialog));
+		gtk_widget_set_size_request (button, 40, 30);
+
+		/* Set the current color */
+		if (gdk_rgba_parse (&rgba, palette_get_color (i)))
+			gtk_color_dialog_button_set_rgba (GTK_COLOR_DIALOG_BUTTON (button), &rgba);
+
+		g_signal_connect (button, "notify::rgba",
+		                  G_CALLBACK (palette_button_color_changed),
+		                  GINT_TO_POINTER (i));
+
+		gtk_grid_attach (GTK_GRID (grid), button, col_base + 1, row, 1, 1);
+
+		palette_buttons[i] = button;
+	}
+
+	g_object_unref (dialog);
+
+	return grid;
 }
 
 /* ===== Preference pages ===== */
@@ -480,6 +632,7 @@ create_colors_page (void)
 	GtkWidget *page;
 	GtkWidget *group;
 	GtkWidget *row;
+	GtkWidget *palette_grid;
 
 	page = adw_preferences_page_new ();
 	adw_preferences_page_set_title (ADW_PREFERENCES_PAGE (page), "Colors");
@@ -495,6 +648,16 @@ create_colors_page (void)
 	row = create_color_scheme_row ("Color scheme", "Choose a color palette",
 	                               &prefs.hex_gui_color_scheme);
 	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	/* Palette Editor group */
+	group = adw_preferences_group_new ();
+	adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group), "Palette Colors");
+	adw_preferences_group_set_description (ADW_PREFERENCES_GROUP (group),
+		"Click a color swatch to edit it. Editing any color switches the scheme to Custom.");
+	adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (group));
+
+	palette_grid = create_palette_editor ();
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), palette_grid);
 
 	/* Text Colors group */
 	group = adw_preferences_group_new ();
@@ -536,8 +699,16 @@ prefs_save_settings (void)
 static gboolean
 prefs_window_close_cb (GtkWindow *window, gpointer user_data)
 {
+	int i;
+
 	prefs_save_settings ();
 	prefs_window = NULL;
+
+	/* Clear palette editor state (widgets are destroyed with the window) */
+	for (i = 0; i < 16; i++)
+		palette_buttons[i] = NULL;
+	scheme_combo_row = NULL;
+
 	return FALSE;  /* Allow window to close */
 }
 

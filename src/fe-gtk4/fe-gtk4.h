@@ -90,6 +90,12 @@ extern GtkWidget *content_stack;       /* GtkStack for session content */
 /* Initialization */
 void fe_gtk4_init_tags (GtkTextBuffer *buffer);
 
+/* Color palette */
+void palette_apply_scheme (int scheme);
+void palette_refresh_all (void);
+const char *palette_get_color (int index);
+void palette_set_color (int index, const char *hex_color);
+
 /* Channel list */
 void chanlist_opengui (struct server *serv, int do_refresh);
 

@@ -177,6 +177,253 @@ static const char *mirc_colors[] = {
 };
 #define MIRC_COLORS_COUNT (sizeof(mirc_colors) / sizeof(mirc_colors[0]))
 
+/* ===== Color Scheme Definitions ===== */
+/* Ported from src/fe-gtk/palette.c, converted from 16-bit GdkColor to 8-bit CSS hex.
+ * Each scheme defines 16 mIRC colors (indices 0-15). */
+
+/* Default scheme (Tango-inspired light theme) */
+static const char *scheme_default[16] = {
+	"#D3D7CF", /* 0 white */
+	"#2E3436", /* 1 black */
+	"#3465A4", /* 2 blue */
+	"#4E9A06", /* 3 green */
+	"#CC0000", /* 4 red */
+	"#8F3902", /* 5 brown */
+	"#5C3566", /* 6 purple */
+	"#CE5C00", /* 7 orange */
+	"#C4A000", /* 8 yellow */
+	"#73D216", /* 9 light green */
+	"#11A879", /* 10 aqua */
+	"#58A19D", /* 11 light aqua */
+	"#57799E", /* 12 blue */
+	"#A04265", /* 13 light purple */
+	"#555753", /* 14 grey */
+	"#888A85", /* 15 light grey */
+};
+
+/* Dark scheme */
+static const char *scheme_dark[16] = {
+	"#D3D7CF", /* 0 white */
+	"#2E3436", /* 1 black */
+	"#5799FF", /* 2 blue */
+	"#7AC936", /* 3 green */
+	"#FF5555", /* 4 red */
+	"#CF6A4C", /* 5 light red */
+	"#AD7FA8", /* 6 purple */
+	"#FFAA00", /* 7 orange */
+	"#FFFF55", /* 8 yellow */
+	"#55FF55", /* 9 light green */
+	"#00D3D3", /* 10 aqua */
+	"#8CE8E8", /* 11 light aqua */
+	"#5555FF", /* 12 light blue */
+	"#FF55FF", /* 13 light purple */
+	"#7F7F7F", /* 14 grey */
+	"#D0D0D0", /* 15 light grey */
+};
+
+/* Monokai scheme */
+static const char *scheme_monokai[16] = {
+	"#F8F8F2", /* 0 white */
+	"#272822", /* 1 black */
+	"#66D9EF", /* 2 blue */
+	"#A6E22E", /* 3 green */
+	"#F92672", /* 4 red */
+	"#FD971F", /* 5 orange */
+	"#AE81FF", /* 6 purple */
+	"#FD971F", /* 7 orange */
+	"#E6DB74", /* 8 yellow */
+	"#A6E22E", /* 9 light green */
+	"#A1EFE4", /* 10 aqua */
+	"#66D9EF", /* 11 light aqua */
+	"#66D9EF", /* 12 light blue */
+	"#AE81FF", /* 13 light purple */
+	"#75715E", /* 14 grey */
+	"#A59F85", /* 15 light grey */
+};
+
+/* Solarized Dark scheme */
+static const char *scheme_solarized_dark[16] = {
+	"#FDF6E3", /* 0 base3 */
+	"#002B36", /* 1 base03 */
+	"#268BD2", /* 2 blue */
+	"#859900", /* 3 green */
+	"#DC322F", /* 4 red */
+	"#CB4B16", /* 5 orange */
+	"#D33682", /* 6 magenta */
+	"#CB4B16", /* 7 orange */
+	"#B58900", /* 8 yellow */
+	"#859900", /* 9 green */
+	"#2AA198", /* 10 cyan */
+	"#2AA198", /* 11 cyan */
+	"#268BD2", /* 12 blue */
+	"#6C71C4", /* 13 violet */
+	"#586E75", /* 14 base01 */
+	"#839496", /* 15 base0 */
+};
+
+/* Solarized Light scheme */
+static const char *scheme_solarized_light[16] = {
+	"#FDF6E3", /* 0 base3 */
+	"#002B36", /* 1 base03 */
+	"#268BD2", /* 2 blue */
+	"#859900", /* 3 green */
+	"#DC322F", /* 4 red */
+	"#CB4B16", /* 5 orange */
+	"#D33682", /* 6 magenta */
+	"#CB4B16", /* 7 orange */
+	"#B58900", /* 8 yellow */
+	"#859900", /* 9 green */
+	"#2AA198", /* 10 cyan */
+	"#2AA198", /* 11 cyan */
+	"#268BD2", /* 12 blue */
+	"#6C71C4", /* 13 violet */
+	"#586E75", /* 14 base01 */
+	"#839496", /* 15 base0 */
+};
+
+/* Array of scheme pointers (index 0 = Custom = NULL) */
+static const char **color_schemes[] = {
+	NULL,                    /* 0 = Custom */
+	scheme_default,          /* 1 = Default */
+	scheme_dark,             /* 2 = Dark */
+	scheme_monokai,          /* 3 = Monokai */
+	scheme_solarized_dark,   /* 4 = Solarized Dark */
+	scheme_solarized_light,  /* 5 = Solarized Light */
+};
+#define COLOR_SCHEME_COUNT (sizeof(color_schemes) / sizeof(color_schemes[0]))
+
+/* Mutable live color array for mIRC colors 0-15.
+ * Initialized to the standard mIRC palette; overwritten by palette_apply_scheme().
+ * Colors 16-98 always come from the static mirc_colors[] extended palette. */
+static char live_colors[16][8];  /* "#RRGGBB\0" */
+static gboolean live_colors_initialized = FALSE;
+
+/* Initialize live_colors from the static mirc_colors defaults */
+static void
+live_colors_init (void)
+{
+	int i;
+	if (live_colors_initialized)
+		return;
+	for (i = 0; i < 16; i++)
+		g_strlcpy (live_colors[i], mirc_colors[i], 8);
+	live_colors_initialized = TRUE;
+}
+
+/* Get the color string for a given mIRC color index (0-98) */
+static const char *
+get_color (int index)
+{
+	if (index < 0)
+		return "#000000";
+	if (index < 16)
+	{
+		live_colors_init ();
+		return live_colors[index];
+	}
+	if (index < (int)MIRC_COLORS_COUNT)
+		return mirc_colors[index];
+	return "#000000";
+}
+
+/* Apply a color scheme to the live palette (colors 0-15 only).
+ * scheme 0 = Custom (no-op), 1-5 = predefined schemes. */
+void
+palette_apply_scheme (int scheme)
+{
+	int i;
+	const char **scheme_colors;
+
+	if (scheme <= 0 || scheme >= (int)COLOR_SCHEME_COUNT)
+		return;
+
+	scheme_colors = color_schemes[scheme];
+	if (!scheme_colors)
+		return;
+
+	live_colors_init ();
+	for (i = 0; i < 16; i++)
+		g_strlcpy (live_colors[i], scheme_colors[i], 8);
+}
+
+/* Get the current color string for a given mIRC color index (0-15).
+ * Returns a "#RRGGBB" string.  For indices outside 0-15 returns "#000000". */
+const char *
+palette_get_color (int index)
+{
+	return get_color (index);
+}
+
+/* Set a single live color (0-15) to a new "#RRGGBB" value and refresh all
+ * open sessions so the change is visible immediately. */
+void
+palette_set_color (int index, const char *hex_color)
+{
+	if (index < 0 || index >= 16 || !hex_color)
+		return;
+
+	live_colors_init ();
+	g_strlcpy (live_colors[index], hex_color, 8);
+	palette_refresh_all ();
+}
+
+/* Update existing text buffer tags to reflect the current live_colors.
+ * Called after palette_apply_scheme() to make changes visible.
+ * Uses the "foreground"/"background" string properties (same as tag
+ * creation in fe_gtk4_init_tags) so that GTK properly invalidates
+ * the text display cache. */
+static void
+update_buffer_tags (GtkTextBuffer *buffer)
+{
+	GtkTextTagTable *table;
+	GtkTextTag *tag;
+	char tag_name[32];
+	guint i;
+
+	if (!buffer)
+		return;
+
+	table = gtk_text_buffer_get_tag_table (buffer);
+
+	for (i = 0; i < MIRC_COLORS_COUNT; i++)
+	{
+		const char *color_str = get_color (i);
+
+		g_snprintf (tag_name, sizeof (tag_name), "fg-%02u", i);
+		tag = gtk_text_tag_table_lookup (table, tag_name);
+		if (tag)
+			g_object_set (tag, "foreground", color_str, NULL);
+
+		g_snprintf (tag_name, sizeof (tag_name), "bg-%02u", i);
+		tag = gtk_text_tag_table_lookup (table, tag_name);
+		if (tag)
+			g_object_set (tag, "background", color_str, NULL);
+	}
+}
+
+/* Refresh color tags on all open sessions */
+void
+palette_refresh_all (void)
+{
+	GSList *list;
+	session *sess;
+	session_gui *gui;
+
+	for (list = sess_list; list; list = list->next)
+	{
+		sess = list->data;
+		if (sess && sess->gui)
+		{
+			gui = sess->gui;
+			if (gui->text_buffer)
+				update_buffer_tags (gui->text_buffer);
+			/* Force GTK4 to re-render text with updated tag colors */
+			if (gui->text_view && GTK_IS_WIDGET (gui->text_view))
+				gtk_widget_queue_draw (gui->text_view);
+		}
+	}
+}
+
 /* ===== User List Item GObject ===== */
 
 /* Simple GObject to wrap user data for GListStore */
@@ -501,6 +748,86 @@ get_session_from_row (GtkListBoxRow *row)
 	return NULL;
 }
 
+/* ===== Sidebar right-click context menu ===== */
+
+/* Close/leave action triggered from the sidebar context menu.
+ * The target session pointer is stored on the popover via g_object_set_data. */
+static void
+sidebar_context_close_cb (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+	GtkPopover *popover = GTK_POPOVER (user_data);
+	session *sess;
+
+	sess = g_object_get_data (G_OBJECT (popover), "hexchat-session");
+	if (sess)
+		fe_close_window (sess);
+}
+
+/* Right-click handler for sidebar rows.
+ * Creates a GtkPopoverMenu with a "Close" item anchored to the click point. */
+static void
+sidebar_row_right_click_cb (GtkGestureClick *gesture, int n_press,
+                            double x, double y, gpointer user_data)
+{
+	GtkWidget *row = GTK_WIDGET (user_data);
+	session *sess;
+	GMenu *menu;
+	GMenu *section;
+	GtkWidget *popover;
+	GSimpleActionGroup *group;
+	GSimpleAction *close_action;
+	GdkRectangle rect;
+
+	sess = get_session_from_row (GTK_LIST_BOX_ROW (row));
+	if (!sess)
+		return;
+
+	/* Build the menu model */
+	menu = g_menu_new ();
+	section = g_menu_new ();
+
+	if (sess->type == SESS_CHANNEL)
+		g_menu_append (section, _("Leave Channel"), "ctx.close-tab");
+	else if (sess->type == SESS_DIALOG)
+		g_menu_append (section, _("Close Dialog"), "ctx.close-tab");
+	else
+		g_menu_append (section, _("Close"), "ctx.close-tab");
+
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (section));
+	g_object_unref (section);
+
+	/* Create the popover */
+	popover = gtk_popover_menu_new_from_model (G_MENU_MODEL (menu));
+	g_object_unref (menu);
+	gtk_widget_set_parent (popover, row);
+
+	/* Position at the click point */
+	rect.x = (int)x;
+	rect.y = (int)y;
+	rect.width = 1;
+	rect.height = 1;
+	gtk_popover_set_pointing_to (GTK_POPOVER (popover), &rect);
+
+	/* Stash the session on the popover so the action callback can find it */
+	g_object_set_data (G_OBJECT (popover), "hexchat-session", sess);
+
+	/* Create a local action group scoped to this popover */
+	group = g_simple_action_group_new ();
+	close_action = g_simple_action_new ("close-tab", NULL);
+	g_signal_connect (close_action, "activate",
+	                  G_CALLBACK (sidebar_context_close_cb), popover);
+	g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (close_action));
+	g_object_unref (close_action);
+	gtk_widget_insert_action_group (popover, "ctx", G_ACTION_GROUP (group));
+	g_object_unref (group);
+
+	/* Clean up the popover when it is closed */
+	g_signal_connect (popover, "closed",
+	                  G_CALLBACK (gtk_widget_unparent), NULL);
+
+	gtk_popover_popup (GTK_POPOVER (popover));
+}
+
 /* Callback when sidebar selection changes */
 static void
 sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data)
@@ -532,6 +859,19 @@ sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_
 		current_tab = new_sess;
 		if (new_sess->server)
 			new_sess->server->front_session = new_sess;
+
+		/* Scroll text view to the end so the user sees the latest messages */
+		if (gui->text_view && gui->text_buffer)
+		{
+			GtkTextIter end_iter;
+			GtkTextMark *end_mark;
+
+			gtk_text_buffer_get_end_iter (gui->text_buffer, &end_iter);
+			end_mark = gtk_text_buffer_create_mark (gui->text_buffer, NULL, &end_iter, FALSE);
+			gtk_text_view_scroll_to_mark (GTK_TEXT_VIEW (gui->text_view), end_mark,
+			                              0.0, TRUE, 0.0, 1.0);
+			gtk_text_buffer_delete_mark (gui->text_buffer, end_mark);
+		}
 
 		/* Focus the input entry */
 		if (gui->input_entry)
@@ -655,6 +995,11 @@ fe_init (void)
 
 	/* Create the main window now, before sessions are created */
 	create_main_window ();
+
+	/* Apply saved color scheme so that sessions created after this
+	 * point will use the correct palette in fe_gtk4_init_tags(). */
+	if (prefs.hex_gui_color_scheme > 0)
+		palette_apply_scheme (prefs.hex_gui_color_scheme);
 }
 
 void
@@ -747,17 +1092,20 @@ fe_gtk4_init_tags (GtkTextBuffer *buffer)
 	guint i;
 	char tag_name[32];
 
-	/* mIRC color tags (0-98) - use the global mirc_colors palette */
+	/* mIRC color tags (0-98) - use live_colors for 0-15, mirc_colors for 16-98 */
+	live_colors_init ();
 	for (i = 0; i < MIRC_COLORS_COUNT; i++)
 	{
+		const char *color_str = get_color (i);
+
 		g_snprintf (tag_name, sizeof (tag_name), "fg-%02u", i);
 		gtk_text_buffer_create_tag (buffer, tag_name,
-		                            "foreground", mirc_colors[i],
+		                            "foreground", color_str,
 		                            NULL);
 
 		g_snprintf (tag_name, sizeof (tag_name), "bg-%02u", i);
 		gtk_text_buffer_create_tag (buffer, tag_name,
-		                            "background", mirc_colors[i],
+		                            "background", color_str,
 		                            NULL);
 	}
 
@@ -1710,30 +2058,44 @@ userlist_click_cb (GtkGestureClick *gesture,
 {
 	session *sess = user_data;
 	GtkWidget *widget;
-	guint button;
 
 	widget = gtk_event_controller_get_widget (GTK_EVENT_CONTROLLER (gesture));
-	button = gtk_gesture_single_get_current_button (GTK_GESTURE_SINGLE (gesture));
 
-	if (button == GDK_BUTTON_SECONDARY)
+	/* Right-click - show context menu */
+	userlist_popup_menu (sess, x, y, widget);
+}
+
+/* GtkListView "activate" signal: fired on double-click (or Enter key).
+ * The position parameter gives the index of the activated item. */
+static void
+userlist_activate_cb (GtkListView *view, guint position, gpointer user_data)
+{
+	session *sess = user_data;
+	UserItem *item;
+
+	if (!sess || !sess->gui || !sess->gui->userlist_store)
+		return;
+
+	item = g_list_model_get_item (G_LIST_MODEL (sess->gui->userlist_store), position);
+	if (!item)
+		return;
+
+	if (item->nick)
 	{
-		/* Right-click - show context menu */
-		userlist_popup_menu (sess, x, y, widget);
-	}
-	else if (button == GDK_BUTTON_PRIMARY && n_press == 2)
-	{
-		/* Double-click - open private chat */
-		char *nick = userlist_get_selected_nick (sess);
-		if (nick)
+		if (prefs.hex_gui_ulist_doubleclick[0])
 		{
-			/* Execute the configured double-click action */
-			if (prefs.hex_gui_ulist_doubleclick[0])
-			{
-				nick_command_parse (sess, prefs.hex_gui_ulist_doubleclick, nick, nick);
-			}
-			g_free (nick);
+			/* Execute the configured double-click action (default: "QUERY %s") */
+			nick_command_parse (sess, prefs.hex_gui_ulist_doubleclick,
+			                    item->nick, item->nick);
+		}
+		else
+		{
+			/* Fallback: open or focus a dialog session directly */
+			open_query (sess->server, item->nick, TRUE);
 		}
 	}
+
+	g_object_unref (item);
 }
 
 /* ===== Window/Session management ===== */
@@ -1833,9 +2195,13 @@ fe_new_window (struct session *sess, int focus)
 	gtk_list_view_set_single_click_activate (GTK_LIST_VIEW (gui->userlist_view), FALSE);
 	gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (userlist_scroll), gui->userlist_view);
 
-	/* Add click gesture for right-click context menu and double-click */
+	/* Double-click / Enter activates: open query with the user */
+	g_signal_connect (gui->userlist_view, "activate",
+	                  G_CALLBACK (userlist_activate_cb), sess);
+
+	/* Right-click gesture for context menu (button 3 only) */
 	GtkGesture *click_gesture = gtk_gesture_click_new ();
-	gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click_gesture), 0); /* Listen to all buttons */
+	gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click_gesture), GDK_BUTTON_SECONDARY);
 	g_signal_connect (click_gesture, "pressed", G_CALLBACK (userlist_click_cb), sess);
 	gtk_widget_add_controller (gui->userlist_view, GTK_EVENT_CONTROLLER (click_gesture));
 
@@ -1882,6 +2248,19 @@ fe_new_window (struct session *sess, int focus)
 		gui->sidebar_row = gtk_list_box_row_new ();
 		gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (gui->sidebar_row),
 		                            gui->sidebar_label);
+
+		/* Attach right-click gesture for context menu */
+		{
+			GtkGesture *click;
+			click = gtk_gesture_click_new ();
+			gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (click), 3);
+			g_signal_connect (click, "pressed",
+			                  G_CALLBACK (sidebar_row_right_click_cb),
+			                  gui->sidebar_row);
+			gtk_widget_add_controller (gui->sidebar_row,
+			                           GTK_EVENT_CONTROLLER (click));
+		}
+
 		gtk_list_box_append (GTK_LIST_BOX (channel_sidebar), gui->sidebar_row);
 
 		if (focus)

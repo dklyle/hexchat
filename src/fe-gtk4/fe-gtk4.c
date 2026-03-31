@@ -42,11 +42,13 @@
 /* Global application state */
 AdwApplication *hexchat_app = NULL;
 GtkWidget *main_window = NULL;
-AdwTabView *tab_view = NULL;
+GtkWidget *channel_sidebar = NULL;     /* GtkListBox for channel/chat list */
+GtkWidget *content_stack = NULL;       /* GtkStack for session content */
 
 static gboolean done = FALSE;
 static gboolean notifications_enabled = TRUE;
 static feicon current_tray_icon = FE_ICON_NORMAL;
+static int session_id_counter = 0;     /* unique id for GtkStack child names */
 
 /* Forward declarations for marker line functions */
 static void set_marker_line (session *sess);
@@ -480,34 +482,32 @@ create_app_menu (void)
 /* Track previously selected session for marker line handling */
 static session *prev_selected_sess = NULL;
 
-/* Get session from a tab page */
+/* Get session from a sidebar row */
 static session *
-get_session_from_page (AdwTabPage *page)
+get_session_from_row (GtkListBoxRow *row)
 {
 	GSList *list;
 	session *sess;
 
-	if (!page)
+	if (!row)
 		return NULL;
 
 	for (list = sess_list; list; list = list->next)
 	{
 		sess = list->data;
-		if (sess && sess->gui && ((session_gui *)sess->gui)->tab_page == page)
+		if (sess && sess->gui && ((session_gui *)sess->gui)->sidebar_row == GTK_WIDGET (row))
 			return sess;
 	}
 	return NULL;
 }
 
-/* Callback when selected tab changes */
+/* Callback when sidebar selection changes */
 static void
-tab_selected_changed_cb (AdwTabView *view, GParamSpec *pspec, gpointer user_data)
+sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data)
 {
-	AdwTabPage *new_page;
 	session *new_sess;
 
-	new_page = adw_tab_view_get_selected_page (view);
-	new_sess = get_session_from_page (new_page);
+	new_sess = get_session_from_row (row);
 
 	/* Set marker on the previous session before switching */
 	if (prev_selected_sess && prev_selected_sess != new_sess)
@@ -519,7 +519,23 @@ tab_selected_changed_cb (AdwTabView *view, GParamSpec *pspec, gpointer user_data
 	/* Clear marker on the new session (user is now viewing it) */
 	if (new_sess && new_sess->gui)
 	{
+		session_gui *gui = new_sess->gui;
 		clear_marker_line (new_sess);
+
+		/* Switch the visible child in the content stack */
+		if (content_stack && gui->content_box)
+		{
+			gtk_stack_set_visible_child (GTK_STACK (content_stack), gui->content_box);
+		}
+
+		current_sess = new_sess;
+		current_tab = new_sess;
+		if (new_sess->server)
+			new_sess->server->front_session = new_sess;
+
+		/* Focus the input entry */
+		if (gui->input_entry)
+			gtk_widget_grab_focus (gui->input_entry);
 	}
 
 	prev_selected_sess = new_sess;
@@ -573,20 +589,41 @@ create_main_window (void)
 	adw_header_bar_pack_end (ADW_HEADER_BAR (header), menu_button);
 	g_object_unref (menu_model);
 
-	/* Create tab view for sessions */
-	tab_view = ADW_TAB_VIEW (adw_tab_view_new ());
-	
-	/* Create tab bar */
-	AdwTabBar *tab_bar = adw_tab_bar_new ();
-	adw_tab_bar_set_view (ADW_TAB_BAR (tab_bar), tab_view);
-	adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar_view), GTK_WIDGET (tab_bar));
+	/* Create 3-pane layout: sidebar | content (chat + userlist) */
+	GtkWidget *main_paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
 
-	/* Connect to page selection changes for marker line support */
-	g_signal_connect (tab_view, "notify::selected-page",
-	                  G_CALLBACK (tab_selected_changed_cb), NULL);
+	/* Left pane: channel sidebar (GtkListBox in a scrolled window) */
+	GtkWidget *sidebar_scroll = gtk_scrolled_window_new ();
+	gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (sidebar_scroll),
+	                                GTK_POLICY_NEVER,
+	                                GTK_POLICY_AUTOMATIC);
+	gtk_widget_set_size_request (sidebar_scroll, 160, -1);
 
-	/* Set tab view as main content */
-	adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), GTK_WIDGET (tab_view));
+	channel_sidebar = gtk_list_box_new ();
+	gtk_list_box_set_selection_mode (GTK_LIST_BOX (channel_sidebar),
+	                                 GTK_SELECTION_SINGLE);
+	g_signal_connect (channel_sidebar, "row-selected",
+	                  G_CALLBACK (sidebar_row_selected_cb), NULL);
+	gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (sidebar_scroll),
+	                               channel_sidebar);
+
+	/* Right pane: content stack (one child per session) */
+	content_stack = gtk_stack_new ();
+	gtk_stack_set_transition_type (GTK_STACK (content_stack),
+	                               GTK_STACK_TRANSITION_TYPE_NONE);
+	gtk_widget_set_hexpand (content_stack, TRUE);
+	gtk_widget_set_vexpand (content_stack, TRUE);
+
+	gtk_paned_set_start_child (GTK_PANED (main_paned), sidebar_scroll);
+	gtk_paned_set_end_child (GTK_PANED (main_paned), content_stack);
+	gtk_paned_set_resize_start_child (GTK_PANED (main_paned), FALSE);
+	gtk_paned_set_resize_end_child (GTK_PANED (main_paned), TRUE);
+	gtk_paned_set_shrink_start_child (GTK_PANED (main_paned), FALSE);
+	gtk_paned_set_shrink_end_child (GTK_PANED (main_paned), FALSE);
+	gtk_paned_set_position (GTK_PANED (main_paned), 180);
+
+	/* Set paned layout as main content */
+	adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), main_paned);
 }
 
 void
@@ -1813,22 +1850,43 @@ fe_new_window (struct session *sess, int focus)
 
 	gtk_box_append (GTK_BOX (main_box), gui->paned);
 
-	/* Add to tab view */
-	if (tab_view)
+	/* Add to content stack and create sidebar row */
+	if (content_stack && channel_sidebar)
 	{
 		const char *tab_title;
+		char stack_name[32];
 
-		/* Get valid UTF-8 title for tab */
+		/* Get valid UTF-8 title for sidebar */
 		if (sess->channel[0] && g_utf8_validate (sess->channel, -1, NULL))
 			tab_title = sess->channel;
 		else
 			tab_title = _("New Tab");
 
-		gui->tab_page = adw_tab_view_append (tab_view, main_box);
-		adw_tab_page_set_title (gui->tab_page, tab_title);
+		/* Generate a unique name for this stack child */
+		g_snprintf (stack_name, sizeof (stack_name), "sess-%d", session_id_counter++);
+
+		/* Store the content box reference */
+		gui->content_box = main_box;
+
+		/* Add session content to the stack */
+		gtk_stack_add_named (GTK_STACK (content_stack), main_box, stack_name);
+
+		/* Create sidebar row: a label inside a GtkListBoxRow */
+		gui->sidebar_label = gtk_label_new (tab_title);
+		gtk_label_set_xalign (GTK_LABEL (gui->sidebar_label), 0.0);
+		gtk_widget_set_margin_start (gui->sidebar_label, 8);
+		gtk_widget_set_margin_end (gui->sidebar_label, 8);
+		gtk_widget_set_margin_top (gui->sidebar_label, 4);
+		gtk_widget_set_margin_bottom (gui->sidebar_label, 4);
+
+		gui->sidebar_row = gtk_list_box_row_new ();
+		gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (gui->sidebar_row),
+		                            gui->sidebar_label);
+		gtk_list_box_append (GTK_LIST_BOX (channel_sidebar), gui->sidebar_row);
 
 		if (focus)
-			adw_tab_view_set_selected_page (tab_view, gui->tab_page);
+			gtk_list_box_select_row (GTK_LIST_BOX (channel_sidebar),
+			                         GTK_LIST_BOX_ROW (gui->sidebar_row));
 	}
 
 	/* Set up server relationships */
@@ -1857,15 +1915,20 @@ fe_close_window (struct session *sess)
 		/* Only manipulate GTK widgets if we're not quitting */
 		if (!hexchat_is_quitting)
 		{
-			if (gui->tab_page && tab_view)
-				adw_tab_view_close_page (tab_view, gui->tab_page);
+			if (gui->sidebar_row && channel_sidebar)
+				gtk_list_box_remove (GTK_LIST_BOX (channel_sidebar),
+				                     gui->sidebar_row);
+			if (gui->content_box && content_stack)
+				gtk_stack_remove (GTK_STACK (content_stack), gui->content_box);
 		}
 
 		/* Clear references but don't unref - GTK owns these */
 		gui->text_buffer = NULL;
 		gui->text_view = NULL;
 		gui->userlist_store = NULL;
-		gui->tab_page = NULL;
+		gui->sidebar_row = NULL;
+		gui->sidebar_label = NULL;
+		gui->content_box = NULL;
 
 		g_free (gui);
 		sess->gui = NULL;
@@ -2279,15 +2342,15 @@ fe_set_channel (struct session *sess)
 
 	gui = sess->gui;
 
-	if (gui->tab_page)
+	if (gui->sidebar_label)
 	{
-		/* Get valid UTF-8 title for tab */
+		/* Get valid UTF-8 title for sidebar */
 		if (sess->channel[0] && g_utf8_validate (sess->channel, -1, NULL))
 			tab_title = sess->channel;
 		else
 			tab_title = _("New Tab");
 
-		adw_tab_page_set_title (gui->tab_page, tab_title);
+		gtk_label_set_text (GTK_LABEL (gui->sidebar_label), tab_title);
 	}
 }
 
@@ -2983,8 +3046,9 @@ fe_ctrl_gui (session *sess, fe_gui_action action, int arg)
 			current_tab = sess;
 			if (sess->server)
 				sess->server->front_session = sess;
-			if (gui->tab_page && tab_view)
-				adw_tab_view_set_selected_page (tab_view, gui->tab_page);
+			if (gui->sidebar_row && channel_sidebar)
+				gtk_list_box_select_row (GTK_LIST_BOX (channel_sidebar),
+				                         GTK_LIST_BOX_ROW (gui->sidebar_row));
 		}
 		break;
 	case FE_GUI_SHOW:

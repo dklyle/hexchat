@@ -31,18 +31,20 @@ struct server;
 /* GUI data attached to each session */
 typedef struct session_gui
 {
-	AdwTabPage *tab_page;          /* tab in AdwTabView */
-	GtkWidget *text_view;          /* GtkTextView for IRC output */
-	GtkTextBuffer *text_buffer;    /* text buffer for text_view */
-	GtkWidget *input_entry;        /* GtkEntry for user input */
-	GtkWidget *userlist_view;      /* GtkListView for user list */
-	GListStore *userlist_store;    /* GListStore backing userlist */
-	GtkWidget *topic_label;        /* topic display widget */
-	GtkWidget *paned;              /* GtkPaned for main layout */
+	GtkWidget *sidebar_row;            /* GtkListBoxRow in channel sidebar */
+	GtkWidget *sidebar_label;          /* GtkLabel inside the sidebar row */
+	GtkWidget *content_box;            /* top-level box for this session's content */
+	GtkWidget *text_view;              /* GtkTextView for IRC output */
+	GtkTextBuffer *text_buffer;        /* text buffer for text_view */
+	GtkWidget *input_entry;            /* GtkEntry for user input */
+	GtkWidget *userlist_view;          /* GtkListView for user list */
+	GListStore *userlist_store;        /* GListStore backing userlist */
+	GtkWidget *topic_label;            /* topic display widget */
+	GtkWidget *paned;                  /* GtkPaned for chat/userlist split */
 	
 	/* Marker line support */
-	GtkTextMark *marker_pos;       /* Position of marker line */
-	gboolean marker_visible;       /* Whether marker is currently shown */
+	GtkTextMark *marker_pos;           /* Position of marker line */
+	gboolean marker_visible;           /* Whether marker is currently shown */
 } session_gui;
 
 /* GUI data attached to each server */
@@ -82,7 +84,8 @@ typedef struct restore_gui
 /* Global application state */
 extern AdwApplication *hexchat_app;
 extern GtkWidget *main_window;
-extern AdwTabView *tab_view;
+extern GtkWidget *channel_sidebar;     /* GtkListBox for channel/chat list */
+extern GtkWidget *content_stack;       /* GtkStack for session content */
 
 /* Initialization */
 void fe_gtk4_init_tags (GtkTextBuffer *buffer);

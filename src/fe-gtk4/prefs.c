@@ -29,6 +29,17 @@
 
 #include "fe-gtk4.h"
 
+/* Color scheme names and count - defined in palette.c for GTK frontend */
+static const char * const color_scheme_names[] = {
+	"Custom",
+	"Default",
+	"Dark",
+	"Monokai",
+	"Solarized Dark",
+	"Solarized Light",
+	NULL
+};
+
 /* Forward declarations */
 static void prefs_save_settings (void);
 
@@ -127,6 +138,43 @@ create_entry_row (const char *title, const char *subtitle, char *pref, int max_l
 
 	g_signal_connect (row, "changed",
 	                  G_CALLBACK (string_pref_changed), pref);
+
+	return row;
+}
+
+/* Color scheme preference callback */
+static void
+color_scheme_pref_changed (GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+	int *pref = user_data;
+	guint selected;
+
+	selected = adw_combo_row_get_selected (ADW_COMBO_ROW (obj));
+	*pref = (int)selected;
+}
+
+/* Create a combo row for color scheme selection */
+static GtkWidget *
+create_color_scheme_row (const char *title, const char *subtitle, int *pref)
+{
+	GtkWidget *row;
+	GtkStringList *model;
+	int i;
+
+	/* Create string list model with color scheme names */
+	model = gtk_string_list_new (NULL);
+	for (i = 0; color_scheme_names[i] != NULL; i++)
+		gtk_string_list_append (model, color_scheme_names[i]);
+
+	row = adw_combo_row_new ();
+	adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+	if (subtitle)
+		adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+	adw_combo_row_set_model (ADW_COMBO_ROW (row), G_LIST_MODEL (model));
+	adw_combo_row_set_selected (ADW_COMBO_ROW (row), (guint)*pref);
+
+	g_signal_connect (row, "notify::selected",
+	                  G_CALLBACK (color_scheme_pref_changed), pref);
 
 	return row;
 }
@@ -425,6 +473,58 @@ create_away_page (void)
 	return page;
 }
 
+/* Create Colors preferences page */
+static GtkWidget *
+create_colors_page (void)
+{
+	GtkWidget *page;
+	GtkWidget *group;
+	GtkWidget *row;
+
+	page = adw_preferences_page_new ();
+	adw_preferences_page_set_title (ADW_PREFERENCES_PAGE (page), "Colors");
+	adw_preferences_page_set_icon_name (ADW_PREFERENCES_PAGE (page), "applications-graphics-symbolic");
+
+	/* Color Scheme group */
+	group = adw_preferences_group_new ();
+	adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group), "Color Scheme");
+	adw_preferences_group_set_description (ADW_PREFERENCES_GROUP (group),
+		"Select a predefined color scheme or customize individual colors");
+	adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (group));
+
+	row = create_color_scheme_row ("Color scheme", "Choose a color palette",
+	                               &prefs.hex_gui_color_scheme);
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	/* Text Colors group */
+	group = adw_preferences_group_new ();
+	adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group), "Text Colors");
+	adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (group));
+
+	row = create_switch_row ("Colored nick names", "Give each person a different color",
+	                         &prefs.hex_text_color_nicks);
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	/* Color Stripping group */
+	group = adw_preferences_group_new ();
+	adw_preferences_group_set_title (ADW_PREFERENCES_GROUP (group), "Color Stripping");
+	adw_preferences_page_add (ADW_PREFERENCES_PAGE (page), ADW_PREFERENCES_GROUP (group));
+
+	row = create_switch_row ("Strip mIRC colors", "Remove color codes from messages",
+	                         &prefs.hex_text_stripcolor_msg);
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	row = create_switch_row ("Strip mIRC colors in topic", "Remove color codes from topic",
+	                         &prefs.hex_text_stripcolor_topic);
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	row = create_switch_row ("Strip mIRC colors in action", "Remove color codes from actions",
+	                         &prefs.hex_text_stripcolor_replay);
+	adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+
+	return page;
+}
+
 /* Save all preferences to config file */
 static void
 prefs_save_settings (void)
@@ -475,6 +575,10 @@ prefs_show (GtkWindow *parent)
 	                            ADW_PREFERENCES_PAGE (page));
 
 	page = create_logging_page ();
+	adw_preferences_window_add (ADW_PREFERENCES_WINDOW (prefs_window),
+	                            ADW_PREFERENCES_PAGE (page));
+
+	page = create_colors_page ();
 	adw_preferences_window_add (ADW_PREFERENCES_WINDOW (prefs_window),
 	                            ADW_PREFERENCES_PAGE (page));
 

@@ -365,6 +365,7 @@ const struct prefs vars[] =
 	{"gui_autoopen_send", P_OFFINT (hex_gui_autoopen_send), TYPE_BOOL},
 	{"gui_chanlist_maxusers", P_OFFINT (hex_gui_chanlist_maxusers), TYPE_INT},
 	{"gui_chanlist_minusers", P_OFFINT (hex_gui_chanlist_minusers), TYPE_INT},
+	{"gui_color_scheme", P_OFFINT (hex_gui_color_scheme), TYPE_INT},
 	{"gui_compact", P_OFFINT (hex_gui_compact), TYPE_BOOL},
 	{"gui_dialog_height", P_OFFINT (hex_gui_dialog_height), TYPE_INT},
 	{"gui_dialog_left", P_OFFINT (hex_gui_dialog_left), TYPE_INT},

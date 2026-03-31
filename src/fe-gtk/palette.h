@@ -34,8 +34,13 @@ extern GdkColor colors[];
 #define COL_SPELL 41
 #define MAX_COL 41
 
+/* Color scheme support */
+extern const int palette_scheme_count;
+extern const char * const palette_scheme_names[];
+
 void palette_alloc (GtkWidget * widget);
 void palette_load (void);
 void palette_save (void);
+void palette_apply_scheme (int scheme);
 
 #endif

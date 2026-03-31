@@ -49,6 +49,9 @@ static GtkWidget *setup_window = NULL;
 static int last_selected_page = 0;
 static int last_selected_row = 0; /* sound row */
 static gboolean color_change;
+static GtkWidget *color_buttons[MAX_COL + 1]; /* array of color button widgets */
+static GdkColor saved_colors[MAX_COL + 1]; /* backup of colors for cancel/restore */
+static gboolean color_accepted; /* TRUE if OK was pressed, FALSE if cancelled */
 static struct hexchatprefs setup_prefs;
 static GtkWidget *cancel_button;
 static GtkWidget *font_dialog = NULL;
@@ -1298,6 +1301,39 @@ setup_create_page (const setting *set)
 }
 
 static void
+setup_update_palette (void)
+{
+	GSList *list;
+	session *sess;
+	int done_main = FALSE;
+
+	input_style = create_input_style (input_style);
+
+	list = sess_list;
+	while (list)
+	{
+		sess = list->data;
+		if (sess->gui->is_tab)
+		{
+			if (!done_main)
+			{
+				done_main = TRUE;
+				mg_update_xtext (sess->gui->xtext);
+			}
+		} else
+		{
+			mg_update_xtext (sess->gui->xtext);
+		}
+
+		userlist_rehash (sess);
+
+		list = list->next;
+	}
+
+	mg_apply_setup ();
+}
+
+static void
 setup_color_ok_cb (GtkWidget *button, GtkWidget *dialog)
 {
 	GtkColorSelectionDialog *cdialog = GTK_COLOR_SELECTION_DIALOG (dialog);
@@ -1331,6 +1367,9 @@ setup_color_ok_cb (GtkWidget *button, GtkWidget *dialog)
 	gdk_colormap_free_colors (gtk_widget_get_colormap (button), &old_color, 1);
 
 	gtk_widget_destroy (dialog);
+
+	/* Apply palette changes live so the user sees the effect immediately */
+	setup_update_palette ();
 }
 
 static void
@@ -1391,6 +1430,10 @@ setup_create_color_button (GtkWidget *table, int num, int row, int col)
 	style->bg[GTK_STATE_NORMAL] = colors[num];
 	gtk_widget_set_style (but, style);
 	g_object_unref (style);
+	
+	/* Store reference to this button for color scheme updates */
+	if (num >= 0 && num <= MAX_COL)
+		color_buttons[num] = but;
 }
 
 static void
@@ -1417,11 +1460,49 @@ setup_create_other_color (char *text, int num, int row, GtkWidget *tab)
 	setup_create_color_button (tab, num, row, 3);
 }
 
+static void
+setup_color_scheme_cb (GtkWidget *cbox, gpointer userdata)
+{
+	int scheme = gtk_combo_box_get_active (GTK_COMBO_BOX (cbox));
+	int i;
+	GtkStyle *style;
+
+	/* Store the selected scheme in preferences */
+	setup_prefs.hex_gui_color_scheme = scheme;
+
+	/* scheme 0 = Custom, don't change colors */
+	if (scheme == 0)
+		return;
+
+	/* Apply the selected color scheme */
+	palette_apply_scheme (scheme);
+	color_change = TRUE;
+
+	/* Update all color buttons to reflect new colors */
+	for (i = 0; i <= MAX_COL; i++)
+	{
+		if (color_buttons[i] != NULL && GTK_IS_WIDGET (color_buttons[i]))
+		{
+			style = gtk_style_new ();
+			style->bg[GTK_STATE_NORMAL] = colors[i];
+			gtk_widget_set_style (color_buttons[i], style);
+			g_object_unref (style);
+		}
+	}
+
+	/* Apply palette changes live so the user sees the effect immediately */
+	setup_update_palette ();
+}
+
 static GtkWidget *
 setup_create_color_page (void)
 {
-	GtkWidget *tab, *box, *label;
+	GtkWidget *tab, *box, *label, *cbox, *hbox;
 	int i;
+
+	/* Initialize color buttons array */
+	for (i = 0; i <= MAX_COL; i++)
+		color_buttons[i] = NULL;
 
 	box = gtk_vbox_new (FALSE, 0);
 	gtk_container_set_border_width (GTK_CONTAINER (box), 6);
@@ -1432,42 +1513,61 @@ setup_create_color_page (void)
 	gtk_table_set_col_spacings (GTK_TABLE (tab), 3);
 	gtk_container_add (GTK_CONTAINER (box), tab);
 
-	setup_create_header (tab, 0, N_("Text Colors"));
+	setup_create_header (tab, 0, N_("Color Scheme"));
 
-	label = gtk_label_new (_("mIRC colors:"));
+	label = gtk_label_new (_("Color scheme:"));
 	gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
 	gtk_table_attach (GTK_TABLE (tab), label, 2, 3, 1, 2,
 							GTK_SHRINK | GTK_FILL, GTK_SHRINK | GTK_FILL, LABEL_INDENT, 0);
 
+	cbox = gtk_combo_box_text_new ();
+	for (i = 0; palette_scheme_names[i] != NULL; i++)
+		gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (cbox), _(palette_scheme_names[i]));
+	gtk_combo_box_set_active (GTK_COMBO_BOX (cbox), setup_prefs.hex_gui_color_scheme);
+	g_signal_connect (G_OBJECT (cbox), "changed",
+							G_CALLBACK (setup_color_scheme_cb), NULL);
+
+	hbox = gtk_hbox_new (0, 0);
+	gtk_box_pack_start (GTK_BOX (hbox), cbox, 0, 0, 0);
+	gtk_table_attach (GTK_TABLE (tab), hbox, 3, 4, 1, 2,
+							GTK_EXPAND | GTK_FILL, GTK_SHRINK | GTK_FILL, 0, 0);
+
+	setup_create_header (tab, 2, N_("Text Colors"));
+
+	label = gtk_label_new (_("mIRC colors:"));
+	gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
+	gtk_table_attach (GTK_TABLE (tab), label, 2, 3, 3, 4,
+							GTK_SHRINK | GTK_FILL, GTK_SHRINK | GTK_FILL, LABEL_INDENT, 0);
+
 	for (i = 0; i < 16; i++)
-		setup_create_color_button (tab, i, 1, i+3);
+		setup_create_color_button (tab, i, 3, i+3);
 
 	label = gtk_label_new (_("Local colors:"));
 	gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
-	gtk_table_attach (GTK_TABLE (tab), label, 2, 3, 2, 3,
+	gtk_table_attach (GTK_TABLE (tab), label, 2, 3, 4, 5,
 							GTK_SHRINK | GTK_FILL, GTK_SHRINK | GTK_FILL, LABEL_INDENT, 0);
 
 	for (i = 16; i < 32; i++)
-		setup_create_color_button (tab, i, 2, (i+3) - 16);
+		setup_create_color_button (tab, i, 4, (i+3) - 16);
 
-	setup_create_other_color (_("Foreground:"), COL_FG, 3, tab);
-	setup_create_other_colorR (_("Background:"), COL_BG, 3, tab);
+	setup_create_other_color (_("Foreground:"), COL_FG, 5, tab);
+	setup_create_other_colorR (_("Background:"), COL_BG, 5, tab);
 
-	setup_create_header (tab, 5, N_("Selected Text"));
+	setup_create_header (tab, 7, N_("Selected Text"));
 
-	setup_create_other_color (_("Foreground:"), COL_MARK_FG, 6, tab);
-	setup_create_other_colorR (_("Background:"), COL_MARK_BG, 6, tab);
+	setup_create_other_color (_("Foreground:"), COL_MARK_FG, 8, tab);
+	setup_create_other_colorR (_("Background:"), COL_MARK_BG, 8, tab);
 
-	setup_create_header (tab, 8, N_("Interface Colors"));
+	setup_create_header (tab, 10, N_("Interface Colors"));
 
-	setup_create_other_color (_("New data:"), COL_NEW_DATA, 9, tab);
-	setup_create_other_colorR (_("Marker line:"), COL_MARKER, 9, tab);
-	setup_create_other_color (_("New message:"), COL_NEW_MSG, 10, tab);
-	setup_create_other_colorR (_("Away user:"), COL_AWAY, 10, tab);
-	setup_create_other_color (_("Highlight:"), COL_HILIGHT, 11, tab);
-	setup_create_other_colorR (_("Spell checker:"), COL_SPELL, 11, tab);
+	setup_create_other_color (_("New data:"), COL_NEW_DATA, 11, tab);
+	setup_create_other_colorR (_("Marker line:"), COL_MARKER, 11, tab);
+	setup_create_other_color (_("New message:"), COL_NEW_MSG, 12, tab);
+	setup_create_other_colorR (_("Away user:"), COL_AWAY, 12, tab);
+	setup_create_other_color (_("Highlight:"), COL_HILIGHT, 13, tab);
+	setup_create_other_colorR (_("Spell checker:"), COL_SPELL, 13, tab);
 
-	setup_create_header (tab, 15, N_("Color Stripping"));
+	setup_create_header (tab, 17, N_("Color Stripping"));
 
 	/* label = gtk_label_new (_("Strip colors from:"));
 	gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
@@ -1476,7 +1576,7 @@ setup_create_color_page (void)
 
 	for (i = 0; i < 3; i++)
 	{
-		setup_create_toggleL (tab, i + 16, &color_settings[i]);
+		setup_create_toggleL (tab, i + 18, &color_settings[i]);
 	}
 
 	return box;
@@ -2143,6 +2243,7 @@ setup_apply (struct hexchatprefs *pr)
 static void
 setup_ok_cb (GtkWidget *but, GtkWidget *win)
 {
+	color_accepted = TRUE;
 	gtk_widget_destroy (win);
 	setup_apply (&setup_prefs);
 	save_config ();
@@ -2198,11 +2299,23 @@ setup_close_cb (GtkWidget *win, GtkWidget **swin)
 		gtk_widget_destroy (font_dialog);
 		font_dialog = NULL;
 	}
+
+	/* If colors were changed but the dialog was cancelled, restore the
+	 * original palette and re-apply it to all sessions. */
+	if (color_change && !color_accepted)
+	{
+		int i;
+		for (i = 0; i <= MAX_COL; i++)
+			colors[i] = saved_colors[i];
+		setup_update_palette ();
+	}
 }
 
 void
 setup_open (void)
 {
+	int i;
+
 	if (setup_window)
 	{
 		gtk_window_present (GTK_WINDOW (setup_window));
@@ -2211,7 +2324,12 @@ setup_open (void)
 
 	memcpy (&setup_prefs, &prefs, sizeof (prefs));
 
+	/* Save a backup of the current palette so we can restore on Cancel */
+	for (i = 0; i <= MAX_COL; i++)
+		saved_colors[i] = colors[i];
+
 	color_change = FALSE;
+	color_accepted = FALSE;
 	setup_window = setup_window_open ();
 
 	g_signal_connect (G_OBJECT (setup_window), "destroy",

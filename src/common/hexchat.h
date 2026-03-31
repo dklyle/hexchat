@@ -218,6 +218,7 @@ struct hexchatprefs
 	int hex_flood_msg_time;
 	int hex_gui_chanlist_maxusers;
 	int hex_gui_chanlist_minusers;
+	int hex_gui_color_scheme;
 	int hex_gui_dialog_height;
 	int hex_gui_dialog_left;
 	int hex_gui_dialog_top;

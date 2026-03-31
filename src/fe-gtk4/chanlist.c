@@ -309,7 +309,7 @@ chanlist_match_topic_toggled_cb (GtkCheckButton *check, gpointer user_data)
 	chanlist_update_label (serv);
 }
 
-static void
+static gboolean
 chanlist_window_closed_cb (GtkWindow *window, gpointer user_data)
 {
 	server *serv = user_data;
@@ -326,6 +326,8 @@ chanlist_window_closed_cb (GtkWindow *window, gpointer user_data)
 		serv->gui->chanlist_filter_model = NULL;
 		serv->gui->chanlist_filter = NULL;
 	}
+
+	return FALSE;  /* Allow the window to close */
 }
 
 /* ===== Column View Factory Callbacks ===== */

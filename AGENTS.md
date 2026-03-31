@@ -6,6 +6,12 @@ This document provides guidelines for AI coding agents working on the HexChat co
 
 HexChat is an IRC client written in C (gnu89 standard) using GTK for the GUI. It supports plugins in C, Python, Perl, and Lua.
 
+### Active Frontend: GTK4 (`src/fe-gtk4/`)
+
+The **GTK4/libadwaita frontend** (`src/fe-gtk4/`) is the only active build target. All new features, bug fixes, and UI work **must** target this frontend. The GTK4 frontend uses `GtkTextView` for chat display and `libadwaita` widgets (e.g., `AdwPreferencesWindow`, `AdwTabView`) for the UI.
+
+The legacy GTK2 frontend (`src/fe-gtk/`) and text frontend (`src/fe-text/`) remain in the source tree for reference only. Do **not** implement changes in those frontends expecting them to take effect.
+
 ## Build System
 
 ### Primary: Meson (>= 0.47.0)
@@ -144,8 +150,9 @@ GList *list;   /* Double-linked list */
 hexchat/
 ├── src/
 │   ├── common/      # Core IRC client logic (shared)
-│   ├── fe-gtk/      # GTK frontend
-│   └── fe-text/     # Text-mode frontend
+│   ├── fe-gtk4/     # GTK4/libadwaita frontend (ACTIVE - all work goes here)
+│   ├── fe-gtk/      # Legacy GTK2 frontend (reference only, not built as active target)
+│   └── fe-text/     # Legacy text-mode frontend (reference only)
 ├── plugins/
 │   ├── fishlim/     # FiSH encryption (has tests)
 │   ├── python/      # Python scripting

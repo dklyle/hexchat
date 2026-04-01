@@ -67,6 +67,10 @@ static void clear_marker_line (session *sess);
 /* Forward declaration for notification */
 static void show_notification (const char *title, const char *body);
 
+/* Forward declarations for topic/nick callbacks */
+static void topic_activate_cb (GtkEntry *entry, gpointer user_data);
+static void nick_button_clicked_cb (GtkButton *button, gpointer user_data);
+
 /* ===== IRC Formatting Constants ===== */
 #define ATTR_BOLD        '\002'
 #define ATTR_COLOR       '\003'
@@ -634,9 +638,26 @@ palette_update_css (void)
 		".hexchat-input {"
 		"  color: %s;"
 		"  background-color: %s;"
+		"}"
+		".hexchat-tab-newdata {"
+		"  color: %s;"
+		"}"
+		".hexchat-tab-newmsg {"
+		"  color: %s;"
+		"}"
+		".hexchat-tab-hilight {"
+		"  color: %s;"
+		"  font-weight: bold;"
+		"}"
+		".hexchat-nick-away {"
+		"  color: %s;"
 		"}",
 		get_color (COL_FG), get_color (COL_BG),
-		get_color (COL_FG), get_color (COL_BG));
+		get_color (COL_FG), get_color (COL_BG),
+		get_color (COL_NEW_DATA),
+		get_color (COL_NEW_MSG),
+		get_color (COL_HILIGHT),
+		get_color (COL_AWAY));
 
 	gtk_css_provider_load_from_string (palette_css_provider, css);
 	g_free (css);
@@ -1102,6 +1123,12 @@ sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_
 		current_tab = new_sess;
 		if (new_sess->server)
 			new_sess->server->front_session = new_sess;
+
+		/* Update window title for the new session */
+		fe_set_title (new_sess);
+
+		/* Clear tab color since the user is now viewing this tab */
+		fe_set_tab_color (new_sess, 0);
 
 		/* Scroll text view to the end so the user sees the latest messages */
 		if (gui->text_view && gui->text_buffer)
@@ -2346,6 +2373,97 @@ userlist_activate_cb (GtkListView *view, guint position, gpointer user_data)
 	g_object_unref (item);
 }
 
+/* ===== Topic and Nick callbacks ===== */
+
+/* Called when the user presses Enter in the topic entry.
+ * Sends a TOPIC command to change the channel topic. */
+static void
+topic_activate_cb (GtkEntry *entry, gpointer user_data)
+{
+	session *sess = user_data;
+	const char *text;
+
+	if (!sess)
+		return;
+
+	text = gtk_editable_get_text (GTK_EDITABLE (entry));
+	if (text && text[0])
+	{
+		char tbuf[CHANLEN + 512];
+		g_snprintf (tbuf, sizeof (tbuf), "TOPIC %s :%s", sess->channel, text);
+		handle_command (sess, tbuf, FALSE);
+	}
+	else
+	{
+		/* Empty topic - unset */
+		char tbuf[CHANLEN + 16];
+		g_snprintf (tbuf, sizeof (tbuf), "TOPIC %s :", sess->channel);
+		handle_command (sess, tbuf, FALSE);
+	}
+}
+
+/* Callback for nick change dialog response */
+static void
+nick_change_response_cb (AdwAlertDialog *dialog, const char *response,
+                         gpointer user_data)
+{
+	session *sess = user_data;
+	GtkWidget *entry;
+
+	if (!g_strcmp0 (response, "change"))
+	{
+		entry = g_object_get_data (G_OBJECT (dialog), "entry");
+		if (entry)
+		{
+			const char *new_nick;
+			new_nick = gtk_editable_get_text (GTK_EDITABLE (entry));
+			if (new_nick && new_nick[0])
+			{
+				char buf[256];
+				g_snprintf (buf, sizeof (buf), "nick %s", new_nick);
+				handle_command (sess, buf, FALSE);
+			}
+		}
+	}
+}
+
+/* Called when the nick button is clicked.
+ * Opens a dialog to change the nickname. */
+static void
+nick_button_clicked_cb (GtkButton *button, gpointer user_data)
+{
+	session *sess = user_data;
+	AdwAlertDialog *dialog;
+	GtkWidget *entry;
+
+	if (!sess || !sess->server)
+		return;
+
+	dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (_("Change Nickname"), NULL));
+	adw_alert_dialog_set_body (dialog, _("Enter new nickname:"));
+
+	/* Add a text entry as extra child */
+	entry = gtk_entry_new ();
+	if (sess->server->nick[0])
+		gtk_editable_set_text (GTK_EDITABLE (entry), sess->server->nick);
+	gtk_widget_set_margin_start (entry, 12);
+	gtk_widget_set_margin_end (entry, 12);
+	adw_alert_dialog_set_extra_child (dialog, entry);
+
+	adw_alert_dialog_add_responses (dialog,
+	                                "cancel", _("Cancel"),
+	                                "change", _("Change"),
+	                                NULL);
+	adw_alert_dialog_set_default_response (dialog, "change");
+	adw_alert_dialog_set_close_response (dialog, "cancel");
+
+	g_object_set_data (G_OBJECT (dialog), "entry", entry);
+	g_signal_connect (dialog, "response",
+	                  G_CALLBACK (nick_change_response_cb), sess);
+
+	adw_alert_dialog_choose (dialog, GTK_WIDGET (main_window), NULL, NULL, NULL);
+}
+
 /* ===== Window/Session management ===== */
 
 void
@@ -2359,6 +2477,15 @@ fe_new_window (struct session *sess, int focus)
 
 	/* Create the main layout */
 	GtkWidget *main_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+
+	/* Create topic entry at the top */
+	gui->topic_entry = gtk_entry_new ();
+	gtk_entry_set_placeholder_text (GTK_ENTRY (gui->topic_entry), _("Topic"));
+	gtk_editable_set_editable (GTK_EDITABLE (gui->topic_entry), TRUE);
+	gtk_widget_add_css_class (gui->topic_entry, "hexchat-topic");
+	g_signal_connect (gui->topic_entry, "activate",
+	                  G_CALLBACK (topic_activate_cb), sess);
+	gtk_box_append (GTK_BOX (main_box), gui->topic_entry);
 
 	/* Create paned widget for userlist */
 	gui->paned = gtk_paned_new (GTK_ORIENTATION_HORIZONTAL);
@@ -2406,11 +2533,25 @@ fe_new_window (struct session *sess, int focus)
 		gtk_widget_add_controller (gui->text_view, motion_controller);
 	}
 
+	/* Create input area with nick button + entry */
+	gui->nick_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
+
+	/* Nick button (flat button showing current nick) */
+	gui->nick_label = gtk_button_new_with_label ("");
+	gtk_widget_add_css_class (gui->nick_label, "flat");
+	gtk_widget_add_css_class (gui->nick_label, "hexchat-nick");
+	g_signal_connect (gui->nick_label, "clicked",
+	                  G_CALLBACK (nick_button_clicked_cb), sess);
+	gtk_box_append (GTK_BOX (gui->nick_box), gui->nick_label);
+
 	/* Create input entry */
 	gui->input_entry = gtk_entry_new ();
 	gtk_entry_set_placeholder_text (GTK_ENTRY (gui->input_entry), "Type a message...");
 	gtk_widget_add_css_class (gui->input_entry, "hexchat-input");
-	gtk_box_append (GTK_BOX (text_box), gui->input_entry);
+	gtk_widget_set_hexpand (gui->input_entry, TRUE);
+	gtk_box_append (GTK_BOX (gui->nick_box), gui->input_entry);
+
+	gtk_box_append (GTK_BOX (text_box), gui->nick_box);
 
 	/* Setup input handling - activate (Enter) signal */
 	g_signal_connect (gui->input_entry, "activate",
@@ -2422,12 +2563,26 @@ fe_new_window (struct session *sess, int focus)
 	                  G_CALLBACK (input_key_pressed_cb), sess);
 	gtk_widget_add_controller (gui->input_entry, key_controller);
 
+	/* Create userlist sidebar box */
+	GtkWidget *userlist_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+	gtk_widget_set_size_request (userlist_box, 140, -1);
+
+	/* User count label at top of userlist */
+	gui->usercount_label = gtk_label_new (NULL);
+	gtk_label_set_xalign (GTK_LABEL (gui->usercount_label), 0.0);
+	gtk_widget_set_margin_start (gui->usercount_label, 4);
+	gtk_widget_set_margin_end (gui->usercount_label, 4);
+	gtk_widget_set_margin_top (gui->usercount_label, 2);
+	gtk_widget_add_css_class (gui->usercount_label, "dim-label");
+	gtk_widget_add_css_class (gui->usercount_label, "caption");
+	gtk_box_append (GTK_BOX (userlist_box), gui->usercount_label);
+
 	/* Create userlist */
 	GtkWidget *userlist_scroll = gtk_scrolled_window_new ();
 	gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (userlist_scroll),
 	                                GTK_POLICY_NEVER,
 	                                GTK_POLICY_AUTOMATIC);
-	gtk_widget_set_size_request (userlist_scroll, 140, -1);
+	gtk_widget_set_vexpand (userlist_scroll, TRUE);
 
 	/* Create GListStore for user items */
 	gui->userlist_store = g_list_store_new (USER_ITEM_TYPE);
@@ -2456,9 +2611,21 @@ fe_new_window (struct session *sess, int focus)
 	g_signal_connect (click_gesture, "pressed", G_CALLBACK (userlist_click_cb), sess);
 	gtk_widget_add_controller (gui->userlist_view, GTK_EVENT_CONTROLLER (click_gesture));
 
+	gtk_box_append (GTK_BOX (userlist_box), userlist_scroll);
+
+	/* Lag label at bottom of userlist sidebar */
+	gui->lag_label = gtk_label_new (NULL);
+	gtk_label_set_xalign (GTK_LABEL (gui->lag_label), 0.0);
+	gtk_widget_set_margin_start (gui->lag_label, 4);
+	gtk_widget_set_margin_end (gui->lag_label, 4);
+	gtk_widget_set_margin_bottom (gui->lag_label, 2);
+	gtk_widget_add_css_class (gui->lag_label, "dim-label");
+	gtk_widget_add_css_class (gui->lag_label, "caption");
+	gtk_box_append (GTK_BOX (userlist_box), gui->lag_label);
+
 	/* Pack into paned */
 	gtk_paned_set_start_child (GTK_PANED (gui->paned), text_box);
-	gtk_paned_set_end_child (GTK_PANED (gui->paned), userlist_scroll);
+	gtk_paned_set_end_child (GTK_PANED (gui->paned), userlist_box);
 	gtk_paned_set_resize_start_child (GTK_PANED (gui->paned), TRUE);
 	gtk_paned_set_resize_end_child (GTK_PANED (gui->paned), FALSE);
 	gtk_paned_set_shrink_start_child (GTK_PANED (gui->paned), FALSE);
@@ -2559,6 +2726,13 @@ fe_close_window (struct session *sess)
 		gui->sidebar_row = NULL;
 		gui->sidebar_label = NULL;
 		gui->content_box = NULL;
+		gui->topic_entry = NULL;
+		gui->nick_box = NULL;
+		gui->nick_label = NULL;
+		gui->usercount_label = NULL;
+		gui->lag_label = NULL;
+		gui->input_entry = NULL;
+		gui->paned = NULL;
 
 		g_free (gui);
 		sess->gui = NULL;
@@ -2953,8 +3127,44 @@ fe_text_clear (struct session *sess, int lines)
 void
 fe_message (char *msg, int flags)
 {
-	/* TODO: Use AdwAlertDialog */
-	g_print ("%s\n", msg);
+	AdwAlertDialog *dialog;
+	const char *heading;
+
+	if (flags & FE_MSG_ERROR)
+		heading = _("Error");
+	else if (flags & FE_MSG_WARN)
+		heading = _("Warning");
+	else if (flags & FE_MSG_INFO)
+		heading = _("Information");
+	else
+		heading = _("HexChat");
+
+	dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (heading, NULL));
+
+	if (flags & FE_MSG_MARKUP)
+		adw_alert_dialog_set_body_use_markup (dialog, TRUE);
+
+	adw_alert_dialog_set_body (dialog, msg);
+
+	adw_alert_dialog_add_response (dialog, "ok", _("OK"));
+	adw_alert_dialog_set_default_response (dialog, "ok");
+	adw_alert_dialog_set_close_response (dialog, "ok");
+
+	if (flags & FE_MSG_WAIT)
+	{
+		/* Blocking: use choose with NULL callback for synchronous-like behavior.
+		 * In GTK4 there's no direct gtk_dialog_run(); we present and let the
+		 * main loop handle it. For FE_MSG_WAIT we'll use the blocking variant. */
+		adw_alert_dialog_choose (dialog,
+		                         main_window ? GTK_WIDGET (main_window) : NULL,
+		                         NULL, NULL, NULL);
+	}
+	else
+	{
+		adw_alert_dialog_choose (dialog,
+		                         main_window ? GTK_WIDGET (main_window) : NULL,
+		                         NULL, NULL, NULL);
+	}
 }
 
 /* ===== Channel/Topic display ===== */
@@ -2962,7 +3172,30 @@ fe_message (char *msg, int flags)
 void
 fe_set_topic (struct session *sess, char *topic, char *stripped_topic)
 {
-	/* TODO: Update topic display in header */
+	session_gui *gui;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	if (gui->topic_entry)
+	{
+		const char *display_topic;
+
+		if (prefs.hex_text_stripcolor_topic)
+			display_topic = stripped_topic ? stripped_topic : "";
+		else
+			display_topic = topic ? topic : "";
+
+		gtk_editable_set_text (GTK_EDITABLE (gui->topic_entry), display_topic);
+
+		/* Set tooltip to full topic text */
+		if (stripped_topic && stripped_topic[0])
+			gtk_widget_set_tooltip_text (gui->topic_entry, stripped_topic);
+		else
+			gtk_widget_set_tooltip_text (gui->topic_entry, NULL);
+	}
 }
 
 void
@@ -2991,25 +3224,174 @@ fe_set_channel (struct session *sess)
 void
 fe_set_title (struct session *sess)
 {
-	/* TODO: Update window title */
+	char tbuf[512];
+	int type;
+
+	if (!sess || !sess->server)
+		return;
+
+	/* Only update if this is the currently visible session */
+	if (sess != current_tab)
+		return;
+
+	type = sess->type;
+
+	if (sess->server->connected == FALSE && type != SESS_DIALOG)
+	{
+		gtk_window_set_title (GTK_WINDOW (main_window), _(DISPLAY_NAME));
+		return;
+	}
+
+	switch (type)
+	{
+	case SESS_DIALOG:
+		g_snprintf (tbuf, sizeof (tbuf), "%s %s @ %s - %s",
+		            _("Dialog with"), sess->channel,
+		            server_get_network (sess->server, TRUE),
+		            _(DISPLAY_NAME));
+		break;
+	case SESS_SERVER:
+		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s - %s",
+		            prefs.hex_gui_win_nick ? sess->server->nick : "",
+		            prefs.hex_gui_win_nick ? " @ " : "",
+		            server_get_network (sess->server, TRUE),
+		            _(DISPLAY_NAME));
+		break;
+	case SESS_CHANNEL:
+		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s / %s%s%s%s - %s",
+		            prefs.hex_gui_win_nick ? sess->server->nick : "",
+		            prefs.hex_gui_win_nick ? " @ " : "",
+		            server_get_network (sess->server, TRUE),
+		            sess->channel,
+		            prefs.hex_gui_win_modes && sess->current_modes ? " (" : "",
+		            prefs.hex_gui_win_modes && sess->current_modes ? sess->current_modes : "",
+		            prefs.hex_gui_win_modes && sess->current_modes ? ")" : "",
+		            _(DISPLAY_NAME));
+		if (prefs.hex_gui_win_ucount)
+		{
+			g_snprintf (tbuf + strlen (tbuf), 9, " (%d)", sess->total);
+		}
+		break;
+	case SESS_NOTICES:
+	case SESS_SNOTICES:
+		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s (notices) - %s",
+		            prefs.hex_gui_win_nick ? sess->server->nick : "",
+		            prefs.hex_gui_win_nick ? " @ " : "",
+		            server_get_network (sess->server, TRUE),
+		            _(DISPLAY_NAME));
+		break;
+	default:
+		g_snprintf (tbuf, sizeof (tbuf), "%s", _(DISPLAY_NAME));
+		break;
+	}
+
+	if (main_window)
+		gtk_window_set_title (GTK_WINDOW (main_window), tbuf);
 }
 
 void
 fe_set_nonchannel (struct session *sess, int state)
 {
-	/* TODO: Indicate non-channel session state */
+	/* Not needed in GTK4 - the GTK2 version was also empty */
 }
 
 void
 fe_clear_channel (struct session *sess)
 {
-	/* TODO: Clear channel-specific UI elements */
+	session_gui *gui;
+	char tbuf[CHANLEN + 6];
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	/* Update sidebar label to show waiting channel or <none> */
+	if (gui->sidebar_label)
+	{
+		if (sess->waitchannel[0])
+		{
+			g_snprintf (tbuf, sizeof (tbuf), "(%s)", sess->waitchannel);
+		}
+		else
+		{
+			g_strlcpy (tbuf, _("<none>"), sizeof (tbuf));
+		}
+		gtk_label_set_text (GTK_LABEL (gui->sidebar_label), tbuf);
+	}
+
+	/* Clear the topic entry */
+	if (gui->topic_entry)
+		gtk_editable_set_text (GTK_EDITABLE (gui->topic_entry), "");
 }
 
 void
 fe_set_tab_color (struct session *sess, tabcolor col)
 {
-	/* TODO: Set tab indicator based on activity */
+	session_gui *gui;
+	int col_noflags;
+	int col_shouldoverride;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	/* Don't change color of the active/focused tab */
+	if (col != 0 && sess == current_tab)
+		return;
+
+	if (!gui->sidebar_label)
+		return;
+
+	col_noflags = (col & ~FE_COLOR_ALLFLAGS);
+	col_shouldoverride = !(col & FE_COLOR_FLAG_NOOVERRIDE);
+
+	/* Remove old color CSS classes */
+	gtk_widget_remove_css_class (gui->sidebar_label, "hexchat-tab-newdata");
+	gtk_widget_remove_css_class (gui->sidebar_label, "hexchat-tab-newmsg");
+	gtk_widget_remove_css_class (gui->sidebar_label, "hexchat-tab-hilight");
+
+	switch (col_noflags)
+	{
+	case 0: /* no particular color (theme default) */
+		sess->tab_state = TAB_STATE_NONE;
+		break;
+	case 1: /* new data has been displayed */
+		if (col_shouldoverride || !((sess->tab_state & TAB_STATE_NEW_MSG)
+		                            || (sess->tab_state & TAB_STATE_NEW_HILIGHT)))
+		{
+			sess->tab_state = TAB_STATE_NEW_DATA;
+			gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-newdata");
+		}
+		else
+		{
+			/* Restore the higher-priority class */
+			if (sess->tab_state & TAB_STATE_NEW_HILIGHT)
+				gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
+			else if (sess->tab_state & TAB_STATE_NEW_MSG)
+				gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-newmsg");
+		}
+		break;
+	case 2: /* new message arrived in channel */
+		if (col_shouldoverride || !(sess->tab_state & TAB_STATE_NEW_HILIGHT))
+		{
+			sess->tab_state = TAB_STATE_NEW_MSG;
+			gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-newmsg");
+		}
+		else
+		{
+			/* Restore highlight class */
+			gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
+		}
+		break;
+	case 3: /* your nick has been seen (highlight) */
+		sess->tab_state = TAB_STATE_NEW_HILIGHT;
+		gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
+		break;
+	}
+
+	sess->last_tab_state = sess->tab_state;
 }
 
 /* ===== Notifications ===== */
@@ -3322,7 +3704,31 @@ fe_userlist_update (struct session *sess, struct User *user)
 void
 fe_userlist_numbers (struct session *sess)
 {
-	/* TODO: Update user count display in status bar or header */
+	session_gui *gui;
+	char tbuf[256];
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	if (gui->usercount_label)
+	{
+		if (sess->total)
+		{
+			g_snprintf (tbuf, sizeof (tbuf), _("%d ops, %d total"),
+			            sess->ops, sess->total);
+			gtk_label_set_text (GTK_LABEL (gui->usercount_label), tbuf);
+		}
+		else
+		{
+			gtk_label_set_text (GTK_LABEL (gui->usercount_label), "");
+		}
+	}
+
+	/* Update titlebar user count if enabled */
+	if (sess->type == SESS_CHANNEL && prefs.hex_gui_win_ucount)
+		fe_set_title (sess);
 }
 
 void
@@ -3403,13 +3809,56 @@ fe_dcc_send_filereq (struct session *sess, char *nick, int maxcps, int passive)
 void
 fe_set_nick (struct server *serv, char *newnick)
 {
-	/* TODO: Update nick display */
+	GSList *list = sess_list;
+	session *sess;
+
+	while (list)
+	{
+		sess = list->data;
+		if (sess->server == serv)
+		{
+			if (sess->gui && sess->gui->nick_label)
+				gtk_button_set_label (GTK_BUTTON (sess->gui->nick_label),
+				                      newnick ? newnick : "");
+		}
+		list = list->next;
+	}
 }
 
 void
 fe_set_lag (server *serv, long lag)
 {
-	/* TODO: Update lag meter */
+	GSList *list = sess_list;
+	session *sess;
+	char lagtext[64];
+	unsigned long nowtim;
+
+	if (lag == -1)
+	{
+		if (!serv->lag_sent)
+			return;
+		nowtim = make_ping_time ();
+		lag = nowtim - serv->lag_sent;
+	}
+
+	/* Cap at 30 seconds */
+	if (lag > 30000 && serv->lag_sent)
+		lag = 30000;
+
+	g_snprintf (lagtext, sizeof (lagtext), "%s%ld.%lds",
+	            serv->lag_sent ? "+" : "", lag / 1000, (lag / 100) % 10);
+
+	while (list)
+	{
+		sess = list->data;
+		if (sess->server == serv && sess->gui && sess->gui->lag_label)
+		{
+			gtk_label_set_text (GTK_LABEL (sess->gui->lag_label), lagtext);
+			gtk_widget_set_tooltip_text (sess->gui->lag_label,
+			                             serv->lag_sent ? _("Lag (waiting for pong)") : _("Lag"));
+		}
+		list = list->next;
+	}
 }
 
 void
@@ -3421,7 +3870,21 @@ fe_set_throttle (server *serv)
 void
 fe_set_away (server *serv)
 {
-	/* TODO: Update away status */
+	GSList *list = sess_list;
+	session *sess;
+
+	while (list)
+	{
+		sess = list->data;
+		if (sess->server == serv && sess->gui && sess->gui->nick_label)
+		{
+			if (serv->is_away)
+				gtk_widget_add_css_class (sess->gui->nick_label, "hexchat-nick-away");
+			else
+				gtk_widget_remove_css_class (sess->gui->nick_label, "hexchat-nick-away");
+		}
+		list = list->next;
+	}
 }
 
 void
@@ -3450,22 +3913,260 @@ fe_serverlist_open (session *sess)
 	servlist_open (sess);
 }
 
+/* Response callback for fe_get_bool dialog */
+static void
+get_bool_response_cb (AdwAlertDialog *dialog, const char *response,
+                      gpointer user_data)
+{
+	void (*callback) (int value, void *user_data);
+	void *ud;
+
+	callback = g_object_get_data (G_OBJECT (dialog), "cb");
+	ud = g_object_get_data (G_OBJECT (dialog), "ud");
+
+	if (callback)
+	{
+		if (!g_strcmp0 (response, "yes"))
+			callback (1, ud);
+		else
+			callback (0, ud);
+	}
+}
+
 void
 fe_get_bool (char *title, char *prompt, void *callback, void *userdata)
 {
-	/* TODO: Show yes/no dialog */
+	AdwAlertDialog *dialog;
+
+	dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (title, prompt));
+
+	adw_alert_dialog_add_responses (dialog,
+	                                "no", _("No"),
+	                                "yes", _("Yes"),
+	                                NULL);
+	adw_alert_dialog_set_default_response (dialog, "yes");
+	adw_alert_dialog_set_close_response (dialog, "no");
+
+	g_object_set_data (G_OBJECT (dialog), "cb", callback);
+	g_object_set_data (G_OBJECT (dialog), "ud", userdata);
+
+	g_signal_connect (dialog, "response",
+	                  G_CALLBACK (get_bool_response_cb), NULL);
+
+	adw_alert_dialog_choose (dialog,
+	                         main_window ? GTK_WIDGET (main_window) : NULL,
+	                         NULL, NULL, NULL);
+}
+
+/* Response callback for fe_get_str dialog */
+static void
+get_str_response_cb (AdwAlertDialog *dialog, const char *response,
+                     gpointer user_data)
+{
+	void (*callback) (int cancel, char *text, void *user_data);
+	GtkWidget *entry;
+	void *ud;
+
+	callback = g_object_get_data (G_OBJECT (dialog), "cb");
+	ud = g_object_get_data (G_OBJECT (dialog), "ud");
+	entry = g_object_get_data (G_OBJECT (dialog), "entry");
+
+	if (callback)
+	{
+		if (!g_strcmp0 (response, "ok") && entry)
+		{
+			const char *text = gtk_editable_get_text (GTK_EDITABLE (entry));
+			callback (FALSE, (char *) text, ud);
+		}
+		else
+		{
+			callback (TRUE, "", ud);
+		}
+	}
 }
 
 void
 fe_get_str (char *prompt, char *def, void *callback, void *ud)
 {
-	/* TODO: Show string input dialog */
+	AdwAlertDialog *dialog;
+	GtkWidget *entry;
+
+	dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (prompt, NULL));
+
+	entry = gtk_entry_new ();
+	if (def)
+		gtk_editable_set_text (GTK_EDITABLE (entry), def);
+	gtk_widget_set_margin_start (entry, 12);
+	gtk_widget_set_margin_end (entry, 12);
+	adw_alert_dialog_set_extra_child (dialog, entry);
+
+	adw_alert_dialog_add_responses (dialog,
+	                                "cancel", _("Cancel"),
+	                                "ok", _("OK"),
+	                                NULL);
+	adw_alert_dialog_set_default_response (dialog, "ok");
+	adw_alert_dialog_set_close_response (dialog, "cancel");
+
+	g_object_set_data (G_OBJECT (dialog), "cb", callback);
+	g_object_set_data (G_OBJECT (dialog), "ud", ud);
+	g_object_set_data (G_OBJECT (dialog), "entry", entry);
+
+	g_signal_connect (dialog, "response",
+	                  G_CALLBACK (get_str_response_cb), NULL);
+
+	adw_alert_dialog_choose (dialog,
+	                         main_window ? GTK_WIDGET (main_window) : NULL,
+	                         NULL, NULL, NULL);
+}
+
+/* Response callback for fe_get_int dialog */
+static void
+get_int_response_cb (AdwAlertDialog *dialog, const char *response,
+                     gpointer user_data)
+{
+	void (*callback) (int cancel, int value, void *user_data);
+	GtkWidget *spin;
+	void *ud;
+
+	callback = g_object_get_data (G_OBJECT (dialog), "cb");
+	ud = g_object_get_data (G_OBJECT (dialog), "ud");
+	spin = g_object_get_data (G_OBJECT (dialog), "spin");
+
+	if (callback)
+	{
+		int value = 0;
+		if (spin)
+			value = gtk_spin_button_get_value_as_int (GTK_SPIN_BUTTON (spin));
+
+		if (!g_strcmp0 (response, "ok"))
+			callback (FALSE, value, ud);
+		else
+			callback (TRUE, value, ud);
+	}
 }
 
 void
 fe_get_int (char *prompt, int def, void *callback, void *ud)
 {
-	/* TODO: Show integer input dialog */
+	AdwAlertDialog *dialog;
+	GtkWidget *spin;
+	GtkAdjustment *adj;
+
+	dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (prompt, NULL));
+
+	adj = gtk_adjustment_new (def, 0, 1024, 1, 10, 0);
+	spin = gtk_spin_button_new (adj, 1, 0);
+	gtk_widget_set_margin_start (spin, 12);
+	gtk_widget_set_margin_end (spin, 12);
+	adw_alert_dialog_set_extra_child (dialog, spin);
+
+	adw_alert_dialog_add_responses (dialog,
+	                                "cancel", _("Cancel"),
+	                                "ok", _("OK"),
+	                                NULL);
+	adw_alert_dialog_set_default_response (dialog, "ok");
+	adw_alert_dialog_set_close_response (dialog, "cancel");
+
+	g_object_set_data (G_OBJECT (dialog), "cb", callback);
+	g_object_set_data (G_OBJECT (dialog), "ud", ud);
+	g_object_set_data (G_OBJECT (dialog), "spin", spin);
+
+	g_signal_connect (dialog, "response",
+	                  G_CALLBACK (get_int_response_cb), NULL);
+
+	adw_alert_dialog_choose (dialog,
+	                         main_window ? GTK_WIDGET (main_window) : NULL,
+	                         NULL, NULL, NULL);
+}
+
+/* Callback data for fe_get_file async operations */
+typedef struct
+{
+	void (*callback) (void *userdata, char *file);
+	void *userdata;
+} FileReqData;
+
+static void
+file_dialog_open_cb (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	FileReqData *data = user_data;
+	GtkFileDialog *dialog = GTK_FILE_DIALOG (source);
+	GFile *file;
+
+	file = gtk_file_dialog_open_finish (dialog, result, NULL);
+	if (file)
+	{
+		char *path = g_file_get_path (file);
+		if (data->callback)
+			data->callback (data->userdata, path);
+		g_free (path);
+		/* Call again with NULL to signal completion */
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+		g_object_unref (file);
+	}
+	else
+	{
+		/* Cancelled */
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+	}
+
+	g_free (data);
+}
+
+static void
+file_dialog_save_cb (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	FileReqData *data = user_data;
+	GtkFileDialog *dialog = GTK_FILE_DIALOG (source);
+	GFile *file;
+
+	file = gtk_file_dialog_save_finish (dialog, result, NULL);
+	if (file)
+	{
+		char *path = g_file_get_path (file);
+		if (data->callback)
+			data->callback (data->userdata, path);
+		g_free (path);
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+		g_object_unref (file);
+	}
+	else
+	{
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+	}
+
+	g_free (data);
+}
+
+static void
+file_dialog_folder_cb (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+	FileReqData *data = user_data;
+	GtkFileDialog *dialog = GTK_FILE_DIALOG (source);
+	GFile *file;
+
+	file = gtk_file_dialog_select_folder_finish (dialog, result, NULL);
+	if (file)
+	{
+		char *path = g_file_get_path (file);
+		if (data->callback)
+			data->callback (data->userdata, path);
+		g_free (path);
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+		g_object_unref (file);
+	}
+	else
+	{
+		if (data->callback)
+			data->callback (data->userdata, NULL);
+	}
+
+	g_free (data);
 }
 
 void
@@ -3473,13 +4174,80 @@ fe_get_file (const char *title, char *initial,
              void (*callback) (void *userdata, char *file), void *userdata,
              int flags)
 {
-	/* TODO: Show file chooser dialog */
+	GtkFileDialog *dialog;
+	FileReqData *data;
+
+	dialog = gtk_file_dialog_new ();
+	if (title)
+		gtk_file_dialog_set_title (dialog, title);
+
+	/* Set initial directory/file */
+	if (initial && initial[0])
+	{
+		GFile *init_file = g_file_new_for_path (initial);
+		if (flags & FRF_FILTERISINITIAL)
+		{
+			GFile *parent = g_file_get_parent (init_file);
+			if (parent)
+			{
+				gtk_file_dialog_set_initial_folder (dialog, parent);
+				g_object_unref (parent);
+			}
+			char *basename = g_file_get_basename (init_file);
+			if (basename)
+			{
+				gtk_file_dialog_set_initial_name (dialog, basename);
+				g_free (basename);
+			}
+		}
+		else
+		{
+			gtk_file_dialog_set_initial_folder (dialog, init_file);
+		}
+		g_object_unref (init_file);
+	}
+
+	data = g_new0 (FileReqData, 1);
+	data->callback = callback;
+	data->userdata = userdata;
+
+	if (flags & FRF_CHOOSEFOLDER)
+	{
+		gtk_file_dialog_select_folder (dialog,
+		                               main_window ? GTK_WINDOW (main_window) : NULL,
+		                               NULL, file_dialog_folder_cb, data);
+	}
+	else if (flags & FRF_WRITE)
+	{
+		gtk_file_dialog_save (dialog,
+		                      main_window ? GTK_WINDOW (main_window) : NULL,
+		                      NULL, file_dialog_save_cb, data);
+	}
+	else
+	{
+		gtk_file_dialog_open (dialog,
+		                      main_window ? GTK_WINDOW (main_window) : NULL,
+		                      NULL, file_dialog_open_cb, data);
+	}
+
+	g_object_unref (dialog);
 }
 
 void
 fe_confirm (const char *message, void (*yesproc)(void *), void (*noproc)(void *), void *ud)
 {
-	/* TODO: Show confirmation dialog */
+	/* Used by DCC - open a save-as dialog.
+	 * Following GTK2 behavior: ignores yes/no procs, opens file dialog. */
+	struct DCC *dcc = ud;
+
+	if (dcc->file)
+	{
+		char *filepath = g_build_filename (prefs.hex_dcc_dir, dcc->file, NULL);
+		fe_get_file (message, filepath,
+		             (void (*)(void *, char *)) yesproc, ud,
+		             FRF_WRITE | FRF_NOASKOVERWRITE | FRF_FILTERISINITIAL);
+		g_free (filepath);
+	}
 }
 
 /* ===== Input box ===== */
@@ -3657,8 +4425,7 @@ fe_ban_list_end (struct session *sess, int rplcode)
 void
 fe_open_chan_list (server *serv, char *filter, int do_refresh)
 {
-	/* TODO: Open channel list window */
-	serv->p_list_channels (serv, filter, 1);
+	chanlist_opengui (serv, do_refresh);
 }
 
 void
@@ -3708,12 +4475,30 @@ fe_ctrl_gui (session *sess, fe_gui_action action, int arg)
 int
 fe_gui_info (session *sess, int info_type)
 {
+	switch (info_type)
+	{
+	case 0: /* window status */
+		if (!main_window || !gtk_widget_get_visible (main_window))
+			return 2; /* hidden */
+
+		if (gtk_window_is_active (GTK_WINDOW (main_window)))
+			return 1; /* active/focused */
+
+		return 0; /* normal (not focused) */
+	}
+
 	return -1;
 }
 
 void *
 fe_gui_info_ptr (session *sess, int info_type)
 {
+	switch (info_type)
+	{
+	case 0: /* native window pointer */
+	case 1: /* GtkWindow * */
+		return main_window;
+	}
 	return NULL;
 }
 

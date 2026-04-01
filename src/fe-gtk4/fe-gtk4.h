@@ -39,9 +39,19 @@ typedef struct session_gui
 	GtkWidget *input_entry;            /* GtkEntry for user input */
 	GtkWidget *userlist_view;          /* GtkListView for user list */
 	GListStore *userlist_store;        /* GListStore backing userlist */
-	GtkWidget *topic_label;            /* topic display widget */
 	GtkWidget *paned;                  /* GtkPaned for chat/userlist split */
-	
+
+	/* Topic bar */
+	GtkWidget *topic_entry;            /* GtkEntry for topic display/editing */
+
+	/* Nick + input area */
+	GtkWidget *nick_box;               /* GtkBox holding nick label + input entry */
+	GtkWidget *nick_label;             /* GtkButton showing current nick */
+
+	/* Userlist info area */
+	GtkWidget *usercount_label;        /* GtkLabel: "5 ops, 23 total" */
+	GtkWidget *lag_label;              /* GtkLabel: "+1.5s" */
+
 	/* Marker line support */
 	GtkTextMark *marker_pos;           /* Position of marker line */
 	gboolean marker_visible;           /* Whether marker is currently shown */

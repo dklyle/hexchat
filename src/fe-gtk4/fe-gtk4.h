@@ -52,6 +52,17 @@ typedef struct session_gui
 	GtkWidget *usercount_label;        /* GtkLabel: "5 ops, 23 total" */
 	GtkWidget *lag_label;              /* GtkLabel: "+1.5s" */
 
+	/* Search bar */
+	GtkWidget *search_bar;             /* GtkBox containing the search bar */
+	GtkWidget *search_entry;           /* GtkSearchEntry for search text */
+	GtkWidget *search_label;           /* GtkLabel showing match count / status */
+	GtkWidget *search_highlight_btn;   /* GtkToggleButton: highlight all */
+	GtkWidget *search_case_btn;        /* GtkToggleButton: match case */
+	GtkWidget *search_regex_btn;       /* GtkToggleButton: regex search */
+	GtkTextMark *search_current;       /* Mark at the current search match */
+	int search_match_count;            /* Number of matches found */
+	int search_current_index;          /* Index of current match (1-based) */
+
 	/* Marker line support */
 	GtkTextMark *marker_pos;           /* Position of marker line */
 	gboolean marker_visible;           /* Whether marker is currently shown */

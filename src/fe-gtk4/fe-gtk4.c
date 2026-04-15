@@ -71,6 +71,16 @@ static void show_notification (const char *title, const char *body);
 static void topic_activate_cb (GtkEntry *entry, gpointer user_data);
 static void nick_button_clicked_cb (GtkButton *button, gpointer user_data);
 
+/* Forward declarations for search bar */
+static void search_toggle (session *sess);
+static void search_do (session *sess, gboolean backward);
+static void search_clear (session *sess);
+static void search_update_highlights (session *sess);
+static void search_update_label (session *sess);
+static gboolean window_key_pressed_cb (GtkEventControllerKey *controller,
+                                       guint keyval, guint keycode,
+                                       GdkModifierType state, gpointer user_data);
+
 /* ===== IRC Formatting Constants ===== */
 #define ATTR_BOLD        '\002'
 #define ATTR_COLOR       '\003'
@@ -651,13 +661,20 @@ palette_update_css (void)
 		"}"
 		".hexchat-nick-away {"
 		"  color: %s;"
+		"}"
+		".hexchat-search-bar {"
+		"  padding: 4px 8px;"
+		"  background-color: alpha(%s, 0.05);"
+		"  border-top: 1px solid alpha(%s, 0.15);"
 		"}",
 		get_color (COL_FG), get_color (COL_BG),
 		get_color (COL_FG), get_color (COL_BG),
 		get_color (COL_NEW_DATA),
 		get_color (COL_NEW_MSG),
 		get_color (COL_HILIGHT),
-		get_color (COL_AWAY));
+		get_color (COL_AWAY),
+		get_color (COL_FG),
+		get_color (COL_FG));
 
 	gtk_css_provider_load_from_string (palette_css_provider, css);
 	g_free (css);
@@ -1160,6 +1177,40 @@ main_window_close_cb (GtkWindow *window, gpointer user_data)
 	return FALSE;  /* Allow the close to proceed */
 }
 
+/* Window-level key press handler for Ctrl+F and Ctrl+G shortcuts */
+static gboolean
+window_key_pressed_cb (GtkEventControllerKey *controller,
+                       guint keyval,
+                       guint keycode,
+                       GdkModifierType state,
+                       gpointer user_data)
+{
+	if (!(state & GDK_CONTROL_MASK))
+		return FALSE;
+
+	if (keyval == GDK_KEY_f)
+	{
+		if (current_sess)
+			search_toggle (current_sess);
+		return TRUE;
+	}
+
+	if (keyval == GDK_KEY_g || keyval == GDK_KEY_G)
+	{
+		if (current_sess && current_sess->gui)
+		{
+			session_gui *gui = current_sess->gui;
+			if (gui->search_bar && gtk_widget_get_visible (gui->search_bar))
+			{
+				search_do (current_sess, (state & GDK_SHIFT_MASK) != 0);
+				return TRUE;
+			}
+		}
+	}
+
+	return FALSE;
+}
+
 /* Create the main window and UI structure */
 static void
 create_main_window (void)
@@ -1234,6 +1285,14 @@ create_main_window (void)
 
 	/* Set paned layout as main content */
 	adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), main_paned);
+
+	/* Window-level key controller for Ctrl+F (search) and Ctrl+G (next/prev) */
+	{
+		GtkEventController *win_key = gtk_event_controller_key_new ();
+		g_signal_connect (win_key, "key-pressed",
+		                  G_CALLBACK (window_key_pressed_cb), NULL);
+		gtk_widget_add_controller (main_window, win_key);
+	}
 }
 
 void
@@ -1423,6 +1482,17 @@ fe_gtk4_init_tags (GtkTextBuffer *buffer)
 	                            "paragraph-background", get_color (COL_MARKER),
 	                            "pixels-above-lines", 2,
 	                            "pixels-below-lines", 2,
+	                            NULL);
+
+	/* Search highlight tags */
+	gtk_text_buffer_create_tag (buffer, "search-highlight",
+	                            "background", get_color (COL_MARK_BG),
+	                            "foreground", get_color (COL_MARK_FG),
+	                            NULL);
+	gtk_text_buffer_create_tag (buffer, "search-current",
+	                            "background", get_color (COL_MARK_BG),
+	                            "foreground", get_color (COL_MARK_FG),
+	                            "underline", PANGO_UNDERLINE_SINGLE,
 	                            NULL);
 }
 
@@ -1859,6 +1929,662 @@ clear_marker_line (session *sess)
 	}
 }
 
+/* ===== Search bar implementation ===== */
+
+/* Remove all search-highlight and search-current tags from the buffer */
+static void
+search_clear (session *sess)
+{
+	session_gui *gui;
+	GtkTextIter start, end;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+	if (!gui->text_buffer)
+		return;
+
+	gtk_text_buffer_get_bounds (gui->text_buffer, &start, &end);
+	gtk_text_buffer_remove_tag_by_name (gui->text_buffer, "search-highlight",
+	                                    &start, &end);
+	gtk_text_buffer_remove_tag_by_name (gui->text_buffer, "search-current",
+	                                    &start, &end);
+
+	if (gui->search_current)
+	{
+		gtk_text_buffer_delete_mark (gui->text_buffer, gui->search_current);
+		gui->search_current = NULL;
+	}
+	gui->search_match_count = 0;
+	gui->search_current_index = 0;
+}
+
+/* Update the match count label in the search bar */
+static void
+search_update_label (session *sess)
+{
+	session_gui *gui;
+	char buf[64];
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+	if (!gui->search_label)
+		return;
+
+	if (gui->search_match_count == 0)
+	{
+		const char *text = gtk_editable_get_text (GTK_EDITABLE (gui->search_entry));
+		if (text && text[0])
+			gtk_label_set_text (GTK_LABEL (gui->search_label), _("No results"));
+		else
+			gtk_label_set_text (GTK_LABEL (gui->search_label), "");
+	}
+	else
+	{
+		g_snprintf (buf, sizeof (buf), "%d / %d",
+		            gui->search_current_index, gui->search_match_count);
+		gtk_label_set_text (GTK_LABEL (gui->search_label), buf);
+	}
+}
+
+/* Count and highlight all matches in the buffer.
+ * Returns the total match count. */
+static int
+search_highlight_all (session *sess, const char *text,
+                      gboolean match_case, gboolean use_regex)
+{
+	session_gui *gui;
+	GtkTextIter start, end, match_start, match_end;
+	GtkTextSearchFlags flags;
+	GRegex *regex = NULL;
+	int count = 0;
+
+	if (!sess || !sess->gui || !text || !text[0])
+		return 0;
+
+	gui = sess->gui;
+	if (!gui->text_buffer)
+		return 0;
+
+	if (use_regex)
+	{
+		GRegexCompileFlags gcf = match_case ? 0 : G_REGEX_CASELESS;
+		GError *err = NULL;
+
+		regex = g_regex_new (text, gcf, 0, &err);
+		if (!regex)
+		{
+			if (err)
+			{
+				char *msg = g_strdup_printf (_("Regex error: %s"), err->message);
+				gtk_label_set_text (GTK_LABEL (gui->search_label), msg);
+				g_free (msg);
+				g_error_free (err);
+			}
+			return -1;  /* error indicator */
+		}
+
+		/* Regex search: extract full text and find matches */
+		gtk_text_buffer_get_bounds (gui->text_buffer, &start, &end);
+		{
+			char *buffer_text = gtk_text_buffer_get_text (gui->text_buffer,
+			                                              &start, &end, FALSE);
+			GMatchInfo *match_info = NULL;
+
+			if (g_regex_match (regex, buffer_text, 0, &match_info))
+			{
+				while (g_match_info_matches (match_info))
+				{
+					int s_pos, e_pos;
+					GtkTextIter ms, me;
+
+					g_match_info_fetch_pos (match_info, 0, &s_pos, &e_pos);
+
+					/* Convert byte offsets to char offsets for GtkTextIter */
+					{
+						int char_start = g_utf8_pointer_to_offset (buffer_text,
+						                                           buffer_text + s_pos);
+						int char_end = g_utf8_pointer_to_offset (buffer_text,
+						                                         buffer_text + e_pos);
+						gtk_text_buffer_get_iter_at_offset (gui->text_buffer, &ms, char_start);
+						gtk_text_buffer_get_iter_at_offset (gui->text_buffer, &me, char_end);
+					}
+
+					gtk_text_buffer_apply_tag_by_name (gui->text_buffer,
+					                                   "search-highlight",
+					                                   &ms, &me);
+					count++;
+					g_match_info_next (match_info, NULL);
+				}
+			}
+
+			g_match_info_free (match_info);
+			g_free (buffer_text);
+		}
+
+		g_regex_unref (regex);
+	}
+	else
+	{
+		/* Plain text search using GtkTextIter */
+		flags = GTK_TEXT_SEARCH_TEXT_ONLY | GTK_TEXT_SEARCH_VISIBLE_ONLY;
+		if (!match_case)
+			flags |= GTK_TEXT_SEARCH_CASE_INSENSITIVE;
+
+		gtk_text_buffer_get_start_iter (gui->text_buffer, &start);
+
+		while (gtk_text_iter_forward_search (&start, text, flags,
+		                                     &match_start, &match_end, NULL))
+		{
+			gtk_text_buffer_apply_tag_by_name (gui->text_buffer,
+			                                   "search-highlight",
+			                                   &match_start, &match_end);
+			count++;
+			start = match_end;
+		}
+	}
+
+	return count;
+}
+
+/* Find the Nth match (1-based) and apply search-current tag.
+ * Returns TRUE if the match was found and scrolled to. */
+static gboolean
+search_goto_match (session *sess, const char *text,
+                   gboolean match_case, gboolean use_regex, int target_index)
+{
+	session_gui *gui;
+	GtkTextIter start, match_start, match_end;
+	GtkTextSearchFlags flags;
+	int current = 0;
+
+	if (!sess || !sess->gui || !text || !text[0] || target_index < 1)
+		return FALSE;
+
+	gui = sess->gui;
+	if (!gui->text_buffer)
+		return FALSE;
+
+	if (use_regex)
+	{
+		GRegexCompileFlags gcf = match_case ? 0 : G_REGEX_CASELESS;
+		GError *err = NULL;
+		GRegex *regex;
+
+		regex = g_regex_new (text, gcf, 0, &err);
+		if (!regex)
+		{
+			if (err) g_error_free (err);
+			return FALSE;
+		}
+
+		gtk_text_buffer_get_bounds (gui->text_buffer, &start, &match_end);
+		{
+			char *buffer_text = gtk_text_buffer_get_text (gui->text_buffer,
+			                                              &start, &match_end, FALSE);
+			GMatchInfo *match_info = NULL;
+			gboolean found = FALSE;
+
+			if (g_regex_match (regex, buffer_text, 0, &match_info))
+			{
+				while (g_match_info_matches (match_info))
+				{
+					current++;
+					if (current == target_index)
+					{
+						int s_pos, e_pos;
+
+						g_match_info_fetch_pos (match_info, 0, &s_pos, &e_pos);
+						{
+							int char_start = g_utf8_pointer_to_offset (buffer_text,
+							                                           buffer_text + s_pos);
+							int char_end = g_utf8_pointer_to_offset (buffer_text,
+							                                         buffer_text + e_pos);
+							gtk_text_buffer_get_iter_at_offset (gui->text_buffer,
+							                                    &match_start, char_start);
+							gtk_text_buffer_get_iter_at_offset (gui->text_buffer,
+							                                    &match_end, char_end);
+						}
+
+						gtk_text_buffer_apply_tag_by_name (gui->text_buffer,
+						                                   "search-current",
+						                                   &match_start, &match_end);
+
+						/* Create/move the current-match mark */
+						if (gui->search_current)
+							gtk_text_buffer_move_mark (gui->text_buffer,
+							                           gui->search_current,
+							                           &match_start);
+						else
+							gui->search_current = gtk_text_buffer_create_mark (
+								gui->text_buffer, "search-current",
+								&match_start, TRUE);
+
+						gtk_text_view_scroll_to_mark (GTK_TEXT_VIEW (gui->text_view),
+						                              gui->search_current,
+						                              0.1, FALSE, 0.0, 0.0);
+						found = TRUE;
+						break;
+					}
+					g_match_info_next (match_info, NULL);
+				}
+			}
+			g_match_info_free (match_info);
+			g_free (buffer_text);
+			g_regex_unref (regex);
+			return found;
+		}
+	}
+	else
+	{
+		flags = GTK_TEXT_SEARCH_TEXT_ONLY | GTK_TEXT_SEARCH_VISIBLE_ONLY;
+		if (!match_case)
+			flags |= GTK_TEXT_SEARCH_CASE_INSENSITIVE;
+
+		gtk_text_buffer_get_start_iter (gui->text_buffer, &start);
+
+		while (gtk_text_iter_forward_search (&start, text, flags,
+		                                     &match_start, &match_end, NULL))
+		{
+			current++;
+			if (current == target_index)
+			{
+				gtk_text_buffer_apply_tag_by_name (gui->text_buffer,
+				                                   "search-current",
+				                                   &match_start, &match_end);
+
+				if (gui->search_current)
+					gtk_text_buffer_move_mark (gui->text_buffer,
+					                           gui->search_current,
+					                           &match_start);
+				else
+					gui->search_current = gtk_text_buffer_create_mark (
+						gui->text_buffer, "search-current",
+						&match_start, TRUE);
+
+				gtk_text_view_scroll_to_mark (GTK_TEXT_VIEW (gui->text_view),
+				                              gui->search_current,
+				                              0.1, FALSE, 0.0, 0.0);
+				return TRUE;
+			}
+			start = match_end;
+		}
+	}
+
+	return FALSE;
+}
+
+/* Perform a full search: highlight all + navigate to a match */
+static void
+search_do (session *sess, gboolean backward)
+{
+	session_gui *gui;
+	const char *text;
+	gboolean match_case, use_regex, highlight_all;
+	int count;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+	if (!gui->search_entry || !gui->text_buffer)
+		return;
+
+	text = gtk_editable_get_text (GTK_EDITABLE (gui->search_entry));
+	if (!text || !text[0])
+	{
+		search_clear (sess);
+		search_update_label (sess);
+		return;
+	}
+
+	match_case = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_case_btn));
+	use_regex = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_regex_btn));
+	highlight_all = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_highlight_btn));
+
+	/* Clear existing highlights */
+	search_clear (sess);
+
+	/* Count and optionally highlight all matches */
+	count = search_highlight_all (sess, text, match_case, use_regex);
+
+	if (count < 0)
+	{
+		/* Regex error - label already set by search_highlight_all */
+		return;
+	}
+
+	gui->search_match_count = count;
+
+	if (!highlight_all && count > 0)
+	{
+		/* Remove the highlight-all tags if user doesn't want them */
+		GtkTextIter start, end;
+		gtk_text_buffer_get_bounds (gui->text_buffer, &start, &end);
+		gtk_text_buffer_remove_tag_by_name (gui->text_buffer, "search-highlight",
+		                                    &start, &end);
+	}
+
+	if (count > 0)
+	{
+		int target;
+
+		if (backward)
+		{
+			/* Navigate from current position backwards */
+			if (gui->search_current_index > 1)
+				target = gui->search_current_index - 1;
+			else
+				target = count;  /* wrap to last */
+		}
+		else
+		{
+			/* When first searching (index==0), go to last match (most recent text).
+			 * Otherwise step forward. */
+			if (gui->search_current_index == 0)
+				target = count;
+			else if (gui->search_current_index < count)
+				target = gui->search_current_index + 1;
+			else
+				target = 1;  /* wrap to first */
+		}
+
+		gui->search_current_index = target;
+		search_goto_match (sess, text, match_case, use_regex, target);
+	}
+
+	search_update_label (sess);
+}
+
+/* Re-highlight without changing current position (for toggle changes) */
+static void
+search_update_highlights (session *sess)
+{
+	session_gui *gui;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	/* Just re-run the full search keeping the same position */
+	{
+		const char *text;
+		gboolean match_case, use_regex, highlight_all;
+		int count, saved_index;
+
+		if (!gui->search_entry || !gui->text_buffer)
+			return;
+
+		text = gtk_editable_get_text (GTK_EDITABLE (gui->search_entry));
+		if (!text || !text[0])
+		{
+			search_clear (sess);
+			search_update_label (sess);
+			return;
+		}
+
+		match_case = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_case_btn));
+		use_regex = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_regex_btn));
+		highlight_all = gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (gui->search_highlight_btn));
+		saved_index = gui->search_current_index;
+
+		search_clear (sess);
+		count = search_highlight_all (sess, text, match_case, use_regex);
+		if (count < 0)
+			return;
+
+		gui->search_match_count = count;
+
+		if (!highlight_all && count > 0)
+		{
+			GtkTextIter start, end;
+			gtk_text_buffer_get_bounds (gui->text_buffer, &start, &end);
+			gtk_text_buffer_remove_tag_by_name (gui->text_buffer, "search-highlight",
+			                                    &start, &end);
+		}
+
+		/* Restore the previous current index, clamped to new count */
+		if (saved_index > 0 && saved_index <= count)
+			gui->search_current_index = saved_index;
+		else if (count > 0)
+			gui->search_current_index = count;
+		else
+			gui->search_current_index = 0;
+
+		if (gui->search_current_index > 0)
+			search_goto_match (sess, text, match_case, use_regex,
+			                   gui->search_current_index);
+
+		search_update_label (sess);
+	}
+}
+
+/* --- Search bar signal callbacks --- */
+
+/* Called when search text changes (incremental search) */
+static void
+search_entry_changed_cb (GtkEditable *editable, gpointer user_data)
+{
+	session *sess = user_data;
+	session_gui *gui;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+	gui->search_current_index = 0;  /* reset position on new text */
+	search_do (sess, FALSE);
+}
+
+/* Called when user presses Enter or clicks Next */
+static void
+search_next_cb (GtkWidget *widget, gpointer user_data)
+{
+	session *sess = user_data;
+	search_do (sess, FALSE);
+}
+
+/* Called when user clicks Previous */
+static void
+search_prev_cb (GtkWidget *widget, gpointer user_data)
+{
+	session *sess = user_data;
+	search_do (sess, TRUE);
+}
+
+/* Called when a toggle (highlight, case, regex) changes */
+static void
+search_option_toggled_cb (GtkToggleButton *btn, gpointer user_data)
+{
+	session *sess = user_data;
+	session_gui *gui;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+
+	/* If case or regex changed, reset index and re-search */
+	if (GTK_WIDGET (btn) == gui->search_case_btn ||
+	    GTK_WIDGET (btn) == gui->search_regex_btn)
+	{
+		gui->search_current_index = 0;
+		search_do (sess, FALSE);
+	}
+	else
+	{
+		/* Highlight toggle: just refresh highlights */
+		search_update_highlights (sess);
+	}
+}
+
+/* Called when the search bar close button is clicked */
+static void
+search_close_cb (GtkButton *button, gpointer user_data)
+{
+	session *sess = user_data;
+	search_toggle (sess);
+}
+
+/* Key press handler for the search entry (Escape to close, Enter for next) */
+static gboolean
+search_entry_key_pressed_cb (GtkEventControllerKey *controller,
+                             guint keyval,
+                             guint keycode,
+                             GdkModifierType state,
+                             gpointer user_data)
+{
+	session *sess = user_data;
+
+	if (keyval == GDK_KEY_Escape)
+	{
+		search_toggle (sess);
+		return TRUE;
+	}
+
+	/* Shift+Enter for previous match */
+	if (keyval == GDK_KEY_Return && (state & GDK_SHIFT_MASK))
+	{
+		search_do (sess, TRUE);
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+/* Toggle the search bar visibility */
+static void
+search_toggle (session *sess)
+{
+	session_gui *gui;
+
+	if (!sess || !sess->gui)
+		return;
+
+	gui = sess->gui;
+	if (!gui->search_bar)
+		return;
+
+	if (gtk_widget_get_visible (gui->search_bar))
+	{
+		/* Hide search bar and clear */
+		gtk_widget_set_visible (gui->search_bar, FALSE);
+		search_clear (sess);
+		search_update_label (sess);
+		if (gui->input_entry)
+			gtk_widget_grab_focus (gui->input_entry);
+	}
+	else
+	{
+		/* Show search bar */
+		gtk_widget_set_visible (gui->search_bar, TRUE);
+		if (gui->search_entry)
+		{
+			gtk_editable_set_text (GTK_EDITABLE (gui->search_entry), "");
+			gtk_widget_grab_focus (gui->search_entry);
+		}
+	}
+}
+
+/* Create the search bar widget for a session.
+ * Returns the search bar box widget (hidden by default). */
+static GtkWidget *
+create_search_bar (session *sess)
+{
+	session_gui *gui = sess->gui;
+	GtkWidget *hbox, *close_btn, *label, *prev_btn, *next_btn;
+	GtkEventController *key_controller;
+
+	/* Container */
+	hbox = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+	gtk_widget_add_css_class (hbox, "hexchat-search-bar");
+	gtk_widget_set_visible (hbox, FALSE);
+	gui->search_bar = hbox;
+
+	/* Close button */
+	close_btn = gtk_button_new_from_icon_name ("window-close-symbolic");
+	gtk_widget_add_css_class (close_btn, "flat");
+	gtk_widget_add_css_class (close_btn, "circular");
+	gtk_widget_set_tooltip_text (close_btn, _("Close search bar (Escape)"));
+	g_signal_connect (close_btn, "clicked", G_CALLBACK (search_close_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), close_btn);
+
+	/* "Find:" label */
+	label = gtk_label_new (_("Find:"));
+	gtk_box_append (GTK_BOX (hbox), label);
+
+	/* Search entry */
+	gui->search_entry = gtk_search_entry_new ();
+	gtk_widget_set_size_request (gui->search_entry, 200, -1);
+	gtk_widget_set_hexpand (gui->search_entry, FALSE);
+	g_signal_connect (gui->search_entry, "search-changed",
+	                  G_CALLBACK (search_entry_changed_cb), sess);
+	g_signal_connect (gui->search_entry, "activate",
+	                  G_CALLBACK (search_next_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), gui->search_entry);
+
+	/* Key controller for Escape/Shift+Enter in search entry */
+	key_controller = gtk_event_controller_key_new ();
+	g_signal_connect (key_controller, "key-pressed",
+	                  G_CALLBACK (search_entry_key_pressed_cb), sess);
+	gtk_widget_add_controller (gui->search_entry, key_controller);
+
+	/* Previous button */
+	prev_btn = gtk_button_new_from_icon_name ("go-up-symbolic");
+	gtk_widget_add_css_class (prev_btn, "flat");
+	gtk_widget_set_tooltip_text (prev_btn, _("Previous match (Shift+Enter)"));
+	g_signal_connect (prev_btn, "clicked", G_CALLBACK (search_prev_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), prev_btn);
+
+	/* Next button */
+	next_btn = gtk_button_new_from_icon_name ("go-down-symbolic");
+	gtk_widget_add_css_class (next_btn, "flat");
+	gtk_widget_set_tooltip_text (next_btn, _("Next match (Enter)"));
+	g_signal_connect (next_btn, "clicked", G_CALLBACK (search_next_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), next_btn);
+
+	/* Match count label */
+	gui->search_label = gtk_label_new ("");
+	gtk_widget_add_css_class (gui->search_label, "dim-label");
+	gtk_widget_set_margin_start (gui->search_label, 4);
+	gtk_box_append (GTK_BOX (hbox), gui->search_label);
+
+	/* Spacer to push toggles to the right */
+	{
+		GtkWidget *spacer = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+		gtk_widget_set_hexpand (spacer, TRUE);
+		gtk_box_append (GTK_BOX (hbox), spacer);
+	}
+
+	/* Highlight All toggle */
+	gui->search_highlight_btn = gtk_toggle_button_new_with_label (_("Highlight All"));
+	gtk_widget_add_css_class (gui->search_highlight_btn, "flat");
+	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (gui->search_highlight_btn), TRUE);
+	g_signal_connect (gui->search_highlight_btn, "toggled",
+	                  G_CALLBACK (search_option_toggled_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), gui->search_highlight_btn);
+
+	/* Match Case toggle */
+	gui->search_case_btn = gtk_toggle_button_new_with_label (_("Match Case"));
+	gtk_widget_add_css_class (gui->search_case_btn, "flat");
+	g_signal_connect (gui->search_case_btn, "toggled",
+	                  G_CALLBACK (search_option_toggled_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), gui->search_case_btn);
+
+	/* Regex toggle */
+	gui->search_regex_btn = gtk_toggle_button_new_with_label (_("Regex"));
+	gtk_widget_add_css_class (gui->search_regex_btn, "flat");
+	g_signal_connect (gui->search_regex_btn, "toggled",
+	                  G_CALLBACK (search_option_toggled_cb), sess);
+	gtk_box_append (GTK_BOX (hbox), gui->search_regex_btn);
+
+	return hbox;
+}
+
 /* ===== Input handling callbacks ===== */
 
 /* Callback when user presses Enter in input box */
@@ -1905,6 +2631,23 @@ input_key_pressed_cb (GtkEventControllerKey *controller,
 		return FALSE;
 
 	gui = sess->gui;
+
+	/* Ctrl+F: toggle search bar */
+	if (keyval == GDK_KEY_f && (state & GDK_CONTROL_MASK))
+	{
+		search_toggle (sess);
+		return TRUE;
+	}
+
+	/* Ctrl+G: search next,  Ctrl+Shift+G: search previous */
+	if (keyval == GDK_KEY_g && (state & GDK_CONTROL_MASK))
+	{
+		if (gui->search_bar && gtk_widget_get_visible (gui->search_bar))
+		{
+			search_do (sess, (state & GDK_SHIFT_MASK) != 0);
+			return TRUE;
+		}
+	}
 
 	switch (keyval)
 	{
@@ -2553,6 +3296,12 @@ fe_new_window (struct session *sess, int focus)
 
 	gtk_box_append (GTK_BOX (text_box), gui->nick_box);
 
+	/* Create search bar (hidden by default, toggled with Ctrl+F) */
+	{
+		GtkWidget *search_bar = create_search_bar (sess);
+		gtk_box_append (GTK_BOX (text_box), search_bar);
+	}
+
 	/* Setup input handling - activate (Enter) signal */
 	g_signal_connect (gui->input_entry, "activate",
 	                  G_CALLBACK (input_activate_cb), sess);
@@ -2733,6 +3482,15 @@ fe_close_window (struct session *sess)
 		gui->lag_label = NULL;
 		gui->input_entry = NULL;
 		gui->paned = NULL;
+
+		/* Search bar cleanup */
+		gui->search_bar = NULL;
+		gui->search_entry = NULL;
+		gui->search_label = NULL;
+		gui->search_highlight_btn = NULL;
+		gui->search_case_btn = NULL;
+		gui->search_regex_btn = NULL;
+		gui->search_current = NULL;
 
 		g_free (gui);
 		sess->gui = NULL;
@@ -4431,7 +5189,97 @@ fe_open_chan_list (server *serv, char *filter, int do_refresh)
 void
 fe_lastlog (session *sess, session *lastlog_sess, char *sstr, gtk_xtext_search_flags flags)
 {
-	/* TODO: Search/lastlog functionality */
+	session_gui *src_gui, *dst_gui;
+	GtkTextIter line_start, line_end;
+	gboolean use_regex, match_case;
+	GRegex *regex = NULL;
+
+	if (!sess || !sess->gui || !lastlog_sess || !lastlog_sess->gui)
+		return;
+
+	src_gui = sess->gui;
+	dst_gui = lastlog_sess->gui;
+
+	if (!src_gui->text_buffer || !dst_gui->text_buffer)
+		return;
+
+	use_regex = (flags & regexp) != 0;
+	match_case = (flags & case_match) != 0;
+
+	if (use_regex)
+	{
+		GRegexCompileFlags gcf = match_case ? 0 : G_REGEX_CASELESS;
+		GError *err = NULL;
+
+		regex = g_regex_new (sstr, gcf, 0, &err);
+		if (!regex)
+		{
+			if (err)
+			{
+				PrintText (lastlog_sess, _(err->message));
+				g_error_free (err);
+			}
+			return;
+		}
+	}
+
+	/* Iterate through each line of the source buffer */
+	gtk_text_buffer_get_start_iter (src_gui->text_buffer, &line_start);
+
+	while (!gtk_text_iter_is_end (&line_start))
+	{
+		char *line_text;
+		gboolean matched = FALSE;
+
+		line_end = line_start;
+		gtk_text_iter_forward_to_line_end (&line_end);
+
+		line_text = gtk_text_buffer_get_text (src_gui->text_buffer,
+		                                      &line_start, &line_end, FALSE);
+
+		if (line_text && line_text[0])
+		{
+			if (use_regex)
+			{
+				matched = g_regex_match (regex, line_text, 0, NULL);
+			}
+			else
+			{
+				if (match_case)
+					matched = (strstr (line_text, sstr) != NULL);
+				else
+				{
+					char *hay = g_utf8_casefold (line_text, -1);
+					char *nee = g_utf8_casefold (sstr, -1);
+					matched = (strstr (hay, nee) != NULL);
+					g_free (hay);
+					g_free (nee);
+				}
+			}
+
+			if (matched)
+			{
+				/* Append the matching line to the lastlog session */
+				GtkTextIter dst_end;
+				gtk_text_buffer_get_end_iter (dst_gui->text_buffer, &dst_end);
+
+				if (gtk_text_buffer_get_char_count (dst_gui->text_buffer) > 0)
+					gtk_text_buffer_insert (dst_gui->text_buffer, &dst_end, "\n", 1);
+
+				gtk_text_buffer_insert (dst_gui->text_buffer, &dst_end,
+				                        line_text, -1);
+			}
+		}
+
+		g_free (line_text);
+
+		/* Move to next line */
+		if (!gtk_text_iter_forward_line (&line_start))
+			break;
+	}
+
+	if (regex)
+		g_regex_unref (regex);
 }
 
 void

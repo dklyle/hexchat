@@ -666,6 +666,15 @@ palette_update_css (void)
 		"  padding: 4px 8px;"
 		"  background-color: alpha(%s, 0.05);"
 		"  border-top: 1px solid alpha(%s, 0.15);"
+		"}"
+		".hexchat-unread-badge {"
+		"  background-color: %s;"
+		"  color: %s;"
+		"  border-radius: 8px;"
+		"  padding: 0px 5px;"
+		"  font-size: 0.75em;"
+		"  font-weight: bold;"
+		"  min-width: 1em;"
 		"}",
 		get_color (COL_FG), get_color (COL_BG),
 		get_color (COL_FG), get_color (COL_BG),
@@ -674,7 +683,8 @@ palette_update_css (void)
 		get_color (COL_HILIGHT),
 		get_color (COL_AWAY),
 		get_color (COL_FG),
-		get_color (COL_FG));
+		get_color (COL_FG),
+		get_color (COL_NEW_MSG), get_color (COL_BG));
 
 	gtk_css_provider_load_from_string (palette_css_provider, css);
 	g_free (css);
@@ -2843,6 +2853,7 @@ userlist_unbind_cb (GtkSignalListItemFactory *factory,
 typedef struct {
 	session *sess;
 	char *nick;
+	char *allnicks;
 	char *cmd;
 } MenuItemData;
 
@@ -2851,6 +2862,7 @@ menu_item_data_free (gpointer data, GClosure *closure)
 {
 	MenuItemData *mid = data;
 	g_free (mid->nick);
+	g_free (mid->allnicks);
 	g_free (mid->cmd);
 	g_free (mid);
 }
@@ -2901,15 +2913,20 @@ nick_command_parse (session *sess, char *cmd, char *nick, char *allnick)
 	g_free (buf);
 }
 
-/* Get the selected nick from the userlist */
-static char *
-userlist_get_selected_nick (session *sess)
+/* Get the selected nicks from the userlist.
+ * Returns a NULL-terminated array of nick strings. Caller must g_strfreev(). 
+ * num_sel is set to the number of selected nicks. */
+static char **
+userlist_get_selected_nicks (session *sess, int *num_sel)
 {
 	session_gui *gui;
 	GtkSelectionModel *selection;
 	GtkBitset *selected;
-	guint first_pos;
-	UserItem *item;
+	GtkBitsetIter iter;
+	guint pos;
+	GPtrArray *nicks;
+
+	*num_sel = 0;
 
 	if (!sess || !sess->gui)
 		return NULL;
@@ -2927,16 +2944,43 @@ userlist_get_selected_nick (session *sess)
 		return NULL;
 	}
 
-	first_pos = gtk_bitset_get_nth (selected, 0);
+	nicks = g_ptr_array_new ();
+
+	if (gtk_bitset_iter_init_first (&iter, selected, &pos))
+	{
+		do
+		{
+			UserItem *item = g_list_model_get_item (G_LIST_MODEL (gui->userlist_store), pos);
+			if (item)
+			{
+				g_ptr_array_add (nicks, g_strdup (item->nick));
+				g_object_unref (item);
+			}
+		} while (gtk_bitset_iter_next (&iter, &pos));
+	}
+
 	gtk_bitset_unref (selected);
 
-	item = g_list_model_get_item (G_LIST_MODEL (gui->userlist_store), first_pos);
-	if (!item)
-		return NULL;
+	*num_sel = nicks->len;
+	g_ptr_array_add (nicks, NULL);
+	return (char **) g_ptr_array_free (nicks, FALSE);
+}
 
-	char *nick = g_strdup (item->nick);
-	g_object_unref (item);
-	return nick;
+/* Build a space-separated string of all nicks */
+static char *
+build_allnicks_string (char **nicks, int num_sel)
+{
+	GString *str;
+	int i;
+
+	str = g_string_new ("");
+	for (i = 0; i < num_sel; i++)
+	{
+		if (i > 0)
+			g_string_append_c (str, ' ');
+		g_string_append (str, nicks[i]);
+	}
+	return g_string_free (str, FALSE);
 }
 
 /* Callback for popup menu item activation */
@@ -2947,104 +2991,299 @@ popup_menu_item_activated (GSimpleAction *action,
 {
 	MenuItemData *mid = user_data;
 
-	if (mid->sess && mid->cmd)
+	if (!mid->sess || !mid->cmd)
+		return;
+
+	if (strstr (mid->cmd, "%a"))
 	{
-		/* nick_command_parse handles $1 substitution etc */
-		nick_command_parse (mid->sess, mid->cmd, mid->nick, mid->nick);
+		/* %a means operate on all nicks at once */
+		nick_command_parse (mid->sess, mid->cmd, mid->nick, mid->allnicks);
+	}
+	else
+	{
+		/* %s means execute once per selected nick */
+		char *p, *start;
+		char *allnicks_copy = g_strdup (mid->allnicks);
+		start = allnicks_copy;
+		while (*start)
+		{
+			p = strchr (start, ' ');
+			if (p)
+				*p = '\0';
+			nick_command_parse (mid->sess, mid->cmd, start, mid->allnicks);
+			if (p)
+				start = p + 1;
+			else
+				break;
+		}
+		g_free (allnicks_copy);
 	}
 }
 
-/* Create and show the userlist popup menu */
+/* Add a nick info item to the submenu. Returns the label text used. */
 static void
-userlist_popup_menu (session *sess, double x, double y, GtkWidget *widget)
+nickinfo_add_item (GMenu *menu, GSimpleActionGroup *action_group,
+                   int *action_index, const char *label, const char *value)
 {
-	GSList *list;
-	struct popup *pop;
-	GMenu *menu;
-	GMenu *current_section;
-	GSimpleActionGroup *action_group;
-	GtkWidget *popover;
-	char *nick;
-	int action_index = 0;
+	char buf[256];
+	char action_name[32];
+	char detailed_action[64];
+	GSimpleAction *action;
 
-	nick = userlist_get_selected_nick (sess);
-	if (!nick)
+	g_snprintf (buf, sizeof (buf), "%s: %s", label, value);
+
+	g_snprintf (action_name, sizeof (action_name), "info%d", *action_index);
+
+	/* Info items are non-activatable display-only items */
+	action = g_simple_action_new (action_name, NULL);
+	g_simple_action_set_enabled (action, FALSE);
+	g_action_map_add_action (G_ACTION_MAP (action_group), G_ACTION (action));
+	g_object_unref (action);
+
+	g_snprintf (detailed_action, sizeof (detailed_action), "userlist.%s", action_name);
+	g_menu_append (menu, buf, detailed_action);
+
+	(*action_index)++;
+}
+
+/* Create the nick info section for the context menu */
+static void
+menu_create_nickinfo_section (GMenu *menu, GSimpleActionGroup *action_group,
+                              int *action_index, session *sess, const char *nick)
+{
+	struct User *user;
+	const char *unknown;
+	GMenu *info_section;
+	char buf[256];
+
+	unknown = _("Unknown");
+
+	user = userlist_find (sess, (char *)nick);
+	if (!user)
+		user = userlist_find_global (sess->server, (char *)nick);
+	if (!user)
 		return;
 
-	menu = g_menu_new ();
-	current_section = g_menu_new ();
-	action_group = g_simple_action_group_new ();
-
-	/* Add nick info header */
+	/* Issue a silent WHOIS if data is missing */
+	if (!user->hostname || !user->realname || !user->servername)
 	{
-		GMenuItem *header = g_menu_item_new (nick, NULL);
-		g_menu_item_set_attribute (header, "action", "s", "none");
-		g_menu_append_item (current_section, header);
-		g_object_unref (header);
+		char whois_buf[512];
+		g_snprintf (whois_buf, sizeof (whois_buf), "WHOIS %s %s", nick, nick);
+		handle_command (sess, whois_buf, FALSE);
+		sess->server->skip_next_whois = 1;
 	}
 
-	g_menu_append_section (menu, NULL, G_MENU_MODEL (current_section));
-	g_object_unref (current_section);
+	info_section = g_menu_new ();
+
+	/* Real Name */
+	if (user->realname)
+	{
+		char *real = strip_color (user->realname, -1, STRIP_ALL);
+		nickinfo_add_item (info_section, action_group, action_index,
+		                   _("Real Name"), real);
+		g_free (real);
+	}
+	else
+		nickinfo_add_item (info_section, action_group, action_index,
+		                   _("Real Name"), unknown);
+
+	/* User (user@host) */
+	nickinfo_add_item (info_section, action_group, action_index,
+	                   _("User"), user->hostname ? user->hostname : unknown);
+
+	/* Account */
+	nickinfo_add_item (info_section, action_group, action_index,
+	                   _("Account"), user->account ? user->account : unknown);
+
+	/* Country */
+	{
+		char *users_country = country (user->hostname);
+		if (users_country)
+			nickinfo_add_item (info_section, action_group, action_index,
+			                   _("Country"), users_country);
+	}
+
+	/* Server */
+	nickinfo_add_item (info_section, action_group, action_index,
+	                   _("Server"), user->servername ? user->servername : unknown);
+
+	/* Last Message */
+	if (user->lasttalk)
+	{
+		g_snprintf (buf, sizeof (buf), _("%u minutes ago"),
+		            (unsigned int) ((time (0) - user->lasttalk) / 60));
+		nickinfo_add_item (info_section, action_group, action_index,
+		                   _("Last Msg"), buf);
+	}
+
+	/* Away Message */
+	if (user->away)
+	{
+		struct away_msg *away = server_away_find_message (sess->server, user->nick);
+		if (away && away->message)
+		{
+			char *msg = strip_color (away->message, -1, STRIP_ALL);
+			nickinfo_add_item (info_section, action_group, action_index,
+			                   _("Away Msg"), msg);
+			g_free (msg);
+		}
+	}
+
+	g_menu_append_section (menu, nick, G_MENU_MODEL (info_section));
+	g_object_unref (info_section);
+}
+
+/* Recursive helper: parse popup_list from *listp onward, appending items to
+ * target_menu. Handles SUB/ENDSUB for nested submenus and SEP for sections.
+ * Returns when ENDSUB is hit or the list is exhausted. */
+static void
+build_popup_menu_items (GSList **listp, GMenu *target_menu,
+                        GSimpleActionGroup *action_group, int *action_index,
+                        session *sess, char *nick, char *allnicks)
+{
+	GMenu *current_section;
+	struct popup *pop;
+
 	current_section = g_menu_new ();
 
-	/* Build menu from popup_list */
-	list = popup_list;
-	while (list)
+	while (*listp)
 	{
-		pop = (struct popup *)list->data;
-		list = list->next;
+		pop = (struct popup *)(*listp)->data;
+		*listp = (*listp)->next;
 
-		if (pop->name[0] == '-')
+		/* Separator */
+		if (pop->name[0] == '-' || strcasecmp (pop->name, "SEP") == 0)
 		{
-			/* Separator - start a new section */
 			if (g_menu_model_get_n_items (G_MENU_MODEL (current_section)) > 0)
 			{
-				g_menu_append_section (menu, NULL, G_MENU_MODEL (current_section));
+				g_menu_append_section (target_menu, NULL, G_MENU_MODEL (current_section));
 				g_object_unref (current_section);
 				current_section = g_menu_new ();
 			}
 			continue;
 		}
 
-		if (strncasecmp (pop->name, "SUB", 3) == 0 ||
-		    strncasecmp (pop->name, "ENDSUB", 6) == 0)
+		/* End of submenu */
+		if (strncasecmp (pop->name, "ENDSUB", 6) == 0)
+			break;
+
+		/* Start of submenu */
+		if (strncasecmp (pop->name, "SUB", 3) == 0)
 		{
-			/* Skip submenu markers for now - flatten the menu */
+			const char *submenu_label = pop->cmd;
+			GMenu *submenu = g_menu_new ();
+
+			build_popup_menu_items (listp, submenu, action_group, action_index,
+			                        sess, nick, allnicks);
+
+			g_menu_append_submenu (current_section, submenu_label,
+			                       G_MENU_MODEL (submenu));
+			g_object_unref (submenu);
 			continue;
 		}
 
-		/* Create action for this menu item */
-		char action_name[32];
-		g_snprintf (action_name, sizeof (action_name), "popup%d", action_index);
+		/* Regular menu item */
+		{
+			char action_name[32];
+			char detailed_action[64];
 
-		MenuItemData *mid = g_new0 (MenuItemData, 1);
-		mid->sess = sess;
-		mid->nick = g_strdup (nick);
-		mid->cmd = g_strdup (pop->cmd);
+			g_snprintf (action_name, sizeof (action_name), "popup%d", *action_index);
 
-		GSimpleAction *action = g_simple_action_new (action_name, NULL);
-		g_signal_connect_data (action, "activate",
-		                       G_CALLBACK (popup_menu_item_activated),
-		                       mid,
-		                       menu_item_data_free,
-		                       0);
-		g_action_map_add_action (G_ACTION_MAP (action_group), G_ACTION (action));
-		g_object_unref (action);
+			MenuItemData *mid = g_new0 (MenuItemData, 1);
+			mid->sess = sess;
+			mid->nick = g_strdup (nick);
+			mid->allnicks = g_strdup (allnicks);
+			mid->cmd = g_strdup (pop->cmd);
 
-		/* Add menu item */
-		char detailed_action[64];
-		g_snprintf (detailed_action, sizeof (detailed_action), "userlist.%s", action_name);
-		g_menu_append (current_section, pop->name, detailed_action);
+			GSimpleAction *action = g_simple_action_new (action_name, NULL);
+			g_signal_connect_data (action, "activate",
+			                       G_CALLBACK (popup_menu_item_activated),
+			                       mid,
+			                       menu_item_data_free,
+			                       0);
+			g_action_map_add_action (G_ACTION_MAP (action_group), G_ACTION (action));
+			g_object_unref (action);
 
-		action_index++;
+			g_snprintf (detailed_action, sizeof (detailed_action), "userlist.%s", action_name);
+
+			/* Strip icon name from label (format: "Label~icon~") */
+			char *label = g_strdup (pop->name);
+			char *tilde = strchr (label, '~');
+			if (tilde)
+				*tilde = '\0';
+			/* Strip leading underscore (mnemonic marker) */
+			char *display = label;
+			if (*display == '_')
+				display++;
+
+			g_menu_append (current_section, display, detailed_action);
+			g_free (label);
+
+			(*action_index)++;
+		}
 	}
 
 	/* Append final section if non-empty */
 	if (g_menu_model_get_n_items (G_MENU_MODEL (current_section)) > 0)
-	{
-		g_menu_append_section (menu, NULL, G_MENU_MODEL (current_section));
-	}
+		g_menu_append_section (target_menu, NULL, G_MENU_MODEL (current_section));
 	g_object_unref (current_section);
+}
+
+/* Create and show the userlist popup menu */
+static void
+userlist_popup_menu (session *sess, double x, double y, GtkWidget *widget)
+{
+	GMenu *menu;
+	GSimpleActionGroup *action_group;
+	GtkWidget *popover;
+	char **nicks;
+	char *allnicks;
+	int num_sel;
+	int action_index = 0;
+
+	nicks = userlist_get_selected_nicks (sess, &num_sel);
+	if (!nicks || num_sel == 0)
+	{
+		g_strfreev (nicks);
+		return;
+	}
+
+	allnicks = build_allnicks_string (nicks, num_sel);
+
+	menu = g_menu_new ();
+	action_group = g_simple_action_group_new ();
+
+	if (num_sel == 1)
+	{
+		/* Single selection: show nick info submenu */
+		menu_create_nickinfo_section (menu, action_group, &action_index,
+		                              sess, nicks[0]);
+	}
+	else
+	{
+		/* Multiple selection: show count header */
+		GMenu *header_section = g_menu_new ();
+		char buf[128];
+		GSimpleAction *header_action;
+
+		g_snprintf (buf, sizeof (buf), _("%d nicks selected."), num_sel);
+
+		header_action = g_simple_action_new ("header", NULL);
+		g_simple_action_set_enabled (header_action, FALSE);
+		g_action_map_add_action (G_ACTION_MAP (action_group), G_ACTION (header_action));
+		g_object_unref (header_action);
+
+		g_menu_append (header_section, buf, "userlist.header");
+		g_menu_append_section (menu, NULL, G_MENU_MODEL (header_section));
+		g_object_unref (header_section);
+	}
+
+	/* Build menu from popup_list with proper submenu support */
+	{
+		GSList *list = popup_list;
+		build_popup_menu_items (&list, menu, action_group, &action_index,
+		                        sess, nicks[0], allnicks);
+	}
 
 	/* Insert action group into widget */
 	gtk_widget_insert_action_group (widget, "userlist", G_ACTION_GROUP (action_group));
@@ -3060,10 +3299,11 @@ userlist_popup_menu (session *sess, double x, double y, GtkWidget *widget)
 
 	gtk_popover_popup (GTK_POPOVER (popover));
 
-	/* Clean up menu model (popover takes a reference) */
+	/* Clean up */
 	g_object_unref (menu);
 	g_object_unref (action_group);
-	g_free (nick);
+	g_strfreev (nicks);
+	g_free (allnicks);
 }
 
 /* Right-click handler for userlist */
@@ -3404,17 +3644,36 @@ fe_new_window (struct session *sess, int focus)
 		/* Add session content to the stack */
 		gtk_stack_add_named (GTK_STACK (content_stack), main_box, stack_name);
 
-		/* Create sidebar row: a label inside a GtkListBoxRow */
+		/* Create sidebar row: a box with name, user count, and unread badge */
+		gui->sidebar_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+		gtk_widget_set_margin_start (gui->sidebar_box, 8);
+		gtk_widget_set_margin_end (gui->sidebar_box, 8);
+		gtk_widget_set_margin_top (gui->sidebar_box, 4);
+		gtk_widget_set_margin_bottom (gui->sidebar_box, 4);
+
 		gui->sidebar_label = gtk_label_new (tab_title);
 		gtk_label_set_xalign (GTK_LABEL (gui->sidebar_label), 0.0);
-		gtk_widget_set_margin_start (gui->sidebar_label, 8);
-		gtk_widget_set_margin_end (gui->sidebar_label, 8);
-		gtk_widget_set_margin_top (gui->sidebar_label, 4);
-		gtk_widget_set_margin_bottom (gui->sidebar_label, 4);
+		gtk_widget_set_hexpand (gui->sidebar_label, TRUE);
+		gtk_label_set_ellipsize (GTK_LABEL (gui->sidebar_label), PANGO_ELLIPSIZE_END);
+		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_label);
+
+		/* User count label (dimmed, right-aligned) */
+		gui->sidebar_usercount = gtk_label_new (NULL);
+		gtk_widget_add_css_class (gui->sidebar_usercount, "dim-label");
+		gtk_widget_add_css_class (gui->sidebar_usercount, "caption");
+		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_usercount);
+
+		/* Unread badge (hidden by default) */
+		gui->sidebar_unread = gtk_label_new (NULL);
+		gtk_widget_add_css_class (gui->sidebar_unread, "hexchat-unread-badge");
+		gtk_widget_set_visible (gui->sidebar_unread, FALSE);
+		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_unread);
+
+		gui->unread_count = 0;
 
 		gui->sidebar_row = gtk_list_box_row_new ();
 		gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (gui->sidebar_row),
-		                            gui->sidebar_label);
+		                            gui->sidebar_box);
 
 		/* Attach right-click gesture for context menu */
 		{
@@ -4114,6 +4373,10 @@ fe_set_tab_color (struct session *sess, tabcolor col)
 	{
 	case 0: /* no particular color (theme default) */
 		sess->tab_state = TAB_STATE_NONE;
+		/* Clear unread count */
+		gui->unread_count = 0;
+		if (gui->sidebar_unread)
+			gtk_widget_set_visible (gui->sidebar_unread, FALSE);
 		break;
 	case 1: /* new data has been displayed */
 		if (col_shouldoverride || !((sess->tab_state & TAB_STATE_NEW_MSG)
@@ -4142,10 +4405,28 @@ fe_set_tab_color (struct session *sess, tabcolor col)
 			/* Restore highlight class */
 			gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
 		}
+		/* Increment unread count for new messages */
+		gui->unread_count++;
+		if (gui->sidebar_unread)
+		{
+			char ubuf[32];
+			g_snprintf (ubuf, sizeof (ubuf), "%d", gui->unread_count);
+			gtk_label_set_text (GTK_LABEL (gui->sidebar_unread), ubuf);
+			gtk_widget_set_visible (gui->sidebar_unread, TRUE);
+		}
 		break;
 	case 3: /* your nick has been seen (highlight) */
 		sess->tab_state = TAB_STATE_NEW_HILIGHT;
 		gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
+		/* Increment unread count for highlights */
+		gui->unread_count++;
+		if (gui->sidebar_unread)
+		{
+			char ubuf[32];
+			g_snprintf (ubuf, sizeof (ubuf), "%d", gui->unread_count);
+			gtk_label_set_text (GTK_LABEL (gui->sidebar_unread), ubuf);
+			gtk_widget_set_visible (gui->sidebar_unread, TRUE);
+		}
 		break;
 	}
 
@@ -4481,6 +4762,22 @@ fe_userlist_numbers (struct session *sess)
 		else
 		{
 			gtk_label_set_text (GTK_LABEL (gui->usercount_label), "");
+		}
+	}
+
+	/* Update sidebar user count */
+	if (gui->sidebar_usercount)
+	{
+		if (sess->total > 0)
+		{
+			g_snprintf (tbuf, sizeof (tbuf), "%d", sess->total);
+			gtk_label_set_text (GTK_LABEL (gui->sidebar_usercount), tbuf);
+			gtk_widget_set_visible (gui->sidebar_usercount, TRUE);
+		}
+		else
+		{
+			gtk_label_set_text (GTK_LABEL (gui->sidebar_usercount), "");
+			gtk_widget_set_visible (gui->sidebar_usercount, FALSE);
 		}
 	}
 

@@ -470,6 +470,52 @@ trailing_index(char *word_eol[])
 	return param_index;
 }
 
+/* ===== WHOIS popup data collection ===== */
+
+static struct whois_info *
+whois_info_new (const char *nick)
+{
+	struct whois_info *info = g_new0 (struct whois_info, 1);
+	g_strlcpy (info->nick, nick, NICKLEN);
+	info->special_lines = g_ptr_array_new_with_free_func (g_free);
+	return info;
+}
+
+static void
+whois_info_free (struct whois_info *info)
+{
+	if (!info)
+		return;
+	g_free (info->user);
+	g_free (info->host);
+	g_free (info->realname);
+	g_free (info->server_desc);
+	g_free (info->channels);
+	g_free (info->away_msg);
+	g_free (info->oper_info);
+	g_free (info->identified);
+	g_free (info->auth_account);
+	g_free (info->auth_msg);
+	g_free (info->idle_time);
+	g_free (info->signon_time);
+	g_ptr_array_free (info->special_lines, TRUE);
+	g_free (info);
+}
+
+/* Append text, concatenating with existing value if present */
+static void
+whois_info_append (char **field, const char *text)
+{
+	if (*field)
+	{
+		char *old = *field;
+		*field = g_strconcat (old, " ", text, NULL);
+		g_free (old);
+	}
+	else
+		*field = g_strdup (text);
+}
+
 static void
 process_numeric (session * sess, int n,
 					  char *word[], char *word_eol[], char *text,
@@ -554,8 +600,10 @@ process_numeric (session * sess, int n,
 
 	case 312:
 		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS3, whois_sess, word[4], word_eol[5],
-										  NULL, NULL, 0, tags_data->timestamp);
+		{
+			if (serv->whois_info)
+				whois_info_append (&serv->whois_info->server_desc, word_eol[5]);
+		}
 		else
 			inbound_user_info (sess, NULL, NULL, NULL, word[5], word[4], NULL, NULL,
 									 0xff, tags_data);
@@ -565,9 +613,16 @@ process_numeric (session * sess, int n,
 		serv->inside_whois = 1;
 		inbound_user_info_start (sess, word[4], tags_data);
 		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS1, whois_sess, word[4], word[5],
-										  word[6], (word_eol[8][0] == ':') ? word_eol[8] + 1 : word_eol[8],
-										  0, tags_data->timestamp);
+		{
+			const char *realname = (word_eol[8][0] == ':') ? word_eol[8] + 1 : word_eol[8];
+			/* Start collecting WHOIS data for popup */
+			if (serv->whois_info)
+				whois_info_free (serv->whois_info);
+			serv->whois_info = whois_info_new (word[4]);
+			serv->whois_info->user = g_strdup (word[5]);
+			serv->whois_info->host = g_strdup (word[6]);
+			serv->whois_info->realname = g_strdup (realname);
+		}
 		else
 			inbound_user_info (sess, NULL, word[5], word[6], NULL, word[4],
 									 word_eol[8][0] == ':' ? word_eol[8] + 1 : word_eol[8],
@@ -585,30 +640,32 @@ process_numeric (session * sess, int n,
 		{
 			time_t timestamp = (time_t) atol (word[6]);
 			long idle = atol (word[5]);
-			char *tim;
 			char outbuf[64];
 
 			g_snprintf (outbuf, sizeof (outbuf),
 						"%02ld:%02ld:%02ld", idle / 3600, (idle / 60) % 60,
 						idle % 60);
-			if (timestamp == 0)
-				EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS4, whois_sess, word[4],
-											  outbuf, NULL, NULL, 0, tags_data->timestamp);
-			else
+			if (serv->whois_info)
 			{
-				tim = ctime (&timestamp);
-				if (tim != NULL)
-					tim[19] = 0; 	/* get rid of the \n */
-				EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS4T, whois_sess, word[4],
-											  outbuf, tim, NULL, 0, tags_data->timestamp);
+				serv->whois_info->idle_time = g_strdup (outbuf);
+				if (timestamp != 0)
+				{
+					char *tim = ctime (&timestamp);
+					if (tim != NULL)
+						tim[19] = 0;
+					serv->whois_info->signon_time = g_strdup (tim);
+				}
 			}
 		}
 		break;
 
 	case 318:	/* END OF WHOIS */
-		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS6, whois_sess, word[4], NULL,
-										  NULL, NULL, 0, tags_data->timestamp);
+		if (!serv->skip_next_whois && serv->whois_info)
+		{
+			fe_whois_popup (whois_sess, serv->whois_info);
+			whois_info_free (serv->whois_info);
+			serv->whois_info = NULL;
+		}
 		serv->skip_next_whois = 0;
 		serv->inside_whois = 0;
 		break;
@@ -616,17 +673,26 @@ process_numeric (session * sess, int n,
 	case 313:
 	case 319:
 		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS2, whois_sess, word[4],
-										  word_eol[5][0] == ':' ? word_eol[5] + 1 : word_eol[5], NULL, NULL, 0,
-										  tags_data->timestamp);
+		{
+			const char *data = word_eol[5][0] == ':' ? word_eol[5] + 1 : word_eol[5];
+			if (serv->whois_info)
+			{
+				if (n == 319)
+					whois_info_append (&serv->whois_info->channels, data);
+				else
+					whois_info_append (&serv->whois_info->oper_info, data);
+			}
+		}
 		break;
 
 	case 307:	/* dalnet version */
 	case 320:	/* :is an identified user */
 		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS_ID, whois_sess, word[4],
-										  word_eol[5][0] == ':' ? word_eol[5] + 1 : word_eol[5], NULL, NULL, 0,
-										  tags_data->timestamp);
+		{
+			const char *data = word_eol[5][0] == ':' ? word_eol[5] + 1 : word_eol[5];
+			if (serv->whois_info)
+				whois_info_append (&serv->whois_info->identified, data);
+		}
 		break;
 
 	case 321:
@@ -696,9 +762,13 @@ process_numeric (session * sess, int n,
 
 	case 330:
 		if (!serv->skip_next_whois)
-			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS_AUTH, whois_sess, word[4],
-										  word_eol[6] + 1, word[5], NULL, 0,
-										  tags_data->timestamp);
+		{
+			if (serv->whois_info)
+			{
+				serv->whois_info->auth_account = g_strdup (word[5]);
+				serv->whois_info->auth_msg = g_strdup (word_eol[6] + 1);
+			}
+		}
 		inbound_user_info (sess, NULL, NULL, NULL, NULL, word[4], NULL, word[5],
 								 0xff, tags_data);
 		break;
@@ -978,9 +1048,13 @@ process_numeric (session * sess, int n,
 		{
 			/* some unknown WHOIS reply, ircd coders make them up weekly */
 			if (!serv->skip_next_whois)
-				EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS_SPECIAL, whois_sess, word[4],
-											  (word_eol[5][0] == ':') ? word_eol[5] + 1 : word_eol[5],
-											  word[2], NULL, 0, tags_data->timestamp);
+			{
+				if (serv->whois_info)
+				{
+					const char *data = (word_eol[5][0] == ':') ? word_eol[5] + 1 : word_eol[5];
+					g_ptr_array_add (serv->whois_info->special_lines, g_strdup (data));
+				}
+			}
 			return;
 		}
 

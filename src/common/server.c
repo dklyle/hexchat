@@ -1877,6 +1877,24 @@ server_free (server *serv)
 	g_free (serv->last_away_reason);
 	g_free (serv->encoding);
 
+	if (serv->whois_info)
+	{
+		g_free (serv->whois_info->user);
+		g_free (serv->whois_info->host);
+		g_free (serv->whois_info->realname);
+		g_free (serv->whois_info->server_desc);
+		g_free (serv->whois_info->channels);
+		g_free (serv->whois_info->away_msg);
+		g_free (serv->whois_info->oper_info);
+		g_free (serv->whois_info->identified);
+		g_free (serv->whois_info->auth_account);
+		g_free (serv->whois_info->auth_msg);
+		g_free (serv->whois_info->idle_time);
+		g_free (serv->whois_info->signon_time);
+		g_ptr_array_free (serv->whois_info->special_lines, TRUE);
+		g_free (serv->whois_info);
+	}
+
 	g_iconv_close (serv->read_converter);
 	g_iconv_close (serv->write_converter);
 

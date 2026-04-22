@@ -1060,8 +1060,14 @@ inbound_away (server *serv, char *nick, char *msg,
 
 	/* possibly hide the output */
 	if (!serv->inside_whois || !serv->skip_next_whois)
-		EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS5, sess, nick, msg, NULL, NULL, 0,
-									  tags_data->timestamp);
+	{
+		/* If collecting for popup, store instead of displaying */
+		if (serv->inside_whois && serv->whois_info)
+			serv->whois_info->away_msg = g_strdup (msg);
+		else
+			EMIT_SIGNAL_TIMESTAMP (XP_TE_WHOIS5, sess, nick, msg, NULL, NULL, 0,
+										  tags_data->timestamp);
+	}
 
 	list = sess_list;
 	while (list)

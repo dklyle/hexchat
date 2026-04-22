@@ -5695,3 +5695,150 @@ fe_tray_set_tooltip (const char *text)
 {
 	/* Tooltip not applicable without tray icon */
 }
+
+/* ===== WHOIS Popup Window ===== */
+
+static void
+whois_popup_add_row (GtkWidget *grid, int *row, const char *label, const char *value)
+{
+	GtkWidget *lbl, *val;
+
+	if (!value || !value[0])
+		return;
+
+	lbl = gtk_label_new (label);
+	gtk_label_set_xalign (GTK_LABEL (lbl), 1.0);
+	gtk_widget_add_css_class (lbl, "dim-label");
+	gtk_widget_set_margin_end (lbl, 8);
+	gtk_grid_attach (GTK_GRID (grid), lbl, 0, *row, 1, 1);
+
+	val = gtk_label_new (value);
+	gtk_label_set_xalign (GTK_LABEL (val), 0.0);
+	gtk_label_set_selectable (GTK_LABEL (val), TRUE);
+	gtk_label_set_wrap (GTK_LABEL (val), TRUE);
+	gtk_label_set_wrap_mode (GTK_LABEL (val), PANGO_WRAP_WORD_CHAR);
+	gtk_widget_set_hexpand (val, TRUE);
+	gtk_grid_attach (GTK_GRID (grid), val, 1, *row, 1, 1);
+
+	(*row)++;
+}
+
+void
+fe_whois_popup (struct session *sess, struct whois_info *info)
+{
+	AdwDialog *dialog;
+	GtkWidget *content;
+	GtkWidget *grid;
+	GtkWidget *header;
+	GtkWidget *scroll;
+	char title[256];
+	char userhost[512];
+	int row = 0;
+	guint i;
+
+	if (!info || !main_window)
+		return;
+
+	g_snprintf (title, sizeof (title), _("WHOIS: %s"), info->nick);
+
+	dialog = adw_dialog_new ();
+	adw_dialog_set_title (ADW_DIALOG (dialog), title);
+	adw_dialog_set_content_width (ADW_DIALOG (dialog), 450);
+	adw_dialog_set_content_height (ADW_DIALOG (dialog), 400);
+
+	/* Use a toolbar view with a header bar */
+	{
+		GtkWidget *toolbar_view = adw_toolbar_view_new ();
+		GtkWidget *headerbar = adw_header_bar_new ();
+		adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar_view), headerbar);
+
+		scroll = gtk_scrolled_window_new ();
+		gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scroll),
+		                                GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+
+		content = gtk_box_new (GTK_ORIENTATION_VERTICAL, 12);
+		gtk_widget_set_margin_start (content, 16);
+		gtk_widget_set_margin_end (content, 16);
+		gtk_widget_set_margin_top (content, 12);
+		gtk_widget_set_margin_bottom (content, 12);
+
+		/* Nick header */
+		header = gtk_label_new (info->nick);
+		gtk_widget_add_css_class (header, "title-1");
+		gtk_label_set_xalign (GTK_LABEL (header), 0.0);
+		gtk_box_append (GTK_BOX (content), header);
+
+		/* Info grid */
+		grid = gtk_grid_new ();
+		gtk_grid_set_row_spacing (GTK_GRID (grid), 6);
+		gtk_grid_set_column_spacing (GTK_GRID (grid), 8);
+
+		/* Real name */
+		whois_popup_add_row (grid, &row, _("Real Name"), info->realname);
+
+		/* User@Host */
+		if (info->user && info->host)
+		{
+			g_snprintf (userhost, sizeof (userhost), "%s@%s", info->user, info->host);
+			whois_popup_add_row (grid, &row, _("User"), userhost);
+		}
+		else if (info->user)
+			whois_popup_add_row (grid, &row, _("User"), info->user);
+
+		/* Account */
+		if (info->auth_account)
+		{
+			char acct_buf[256];
+			if (info->auth_msg)
+				g_snprintf (acct_buf, sizeof (acct_buf), "%s (%s)",
+				            info->auth_account, info->auth_msg);
+			else
+				g_strlcpy (acct_buf, info->auth_account, sizeof (acct_buf));
+			whois_popup_add_row (grid, &row, _("Account"), acct_buf);
+		}
+
+		/* Identified */
+		whois_popup_add_row (grid, &row, _("Identified"), info->identified);
+
+		/* Server */
+		whois_popup_add_row (grid, &row, _("Server"), info->server_desc);
+
+		/* Channels */
+		whois_popup_add_row (grid, &row, _("Channels"), info->channels);
+
+		/* Operator info */
+		whois_popup_add_row (grid, &row, _("Operator"), info->oper_info);
+
+		/* Idle time */
+		if (info->idle_time)
+		{
+			if (info->signon_time)
+			{
+				char idle_buf[256];
+				g_snprintf (idle_buf, sizeof (idle_buf), _("%s (signon: %s)"),
+				            info->idle_time, info->signon_time);
+				whois_popup_add_row (grid, &row, _("Idle"), idle_buf);
+			}
+			else
+				whois_popup_add_row (grid, &row, _("Idle"), info->idle_time);
+		}
+
+		/* Away */
+		whois_popup_add_row (grid, &row, _("Away"), info->away_msg);
+
+		/* Special/extra lines */
+		for (i = 0; i < info->special_lines->len; i++)
+		{
+			const char *line = g_ptr_array_index (info->special_lines, i);
+			whois_popup_add_row (grid, &row, _("Info"), line);
+		}
+
+		gtk_box_append (GTK_BOX (content), grid);
+
+		gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scroll), content);
+		adw_toolbar_view_set_content (ADW_TOOLBAR_VIEW (toolbar_view), scroll);
+		adw_dialog_set_child (ADW_DIALOG (dialog), toolbar_view);
+	}
+
+	adw_dialog_present (ADW_DIALOG (dialog), main_window);
+}

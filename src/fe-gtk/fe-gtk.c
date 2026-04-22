@@ -983,6 +983,12 @@ fe_open_chan_list (server *serv, char *filter, int do_refresh)
 	chanlist_opengui (serv, do_refresh);
 }
 
+void
+fe_whois_popup (struct session *sess, struct whois_info *info)
+{
+	/* GTK2 frontend: not implemented, output goes to session as before */
+}
+
 const char *
 fe_get_default_font (void)
 {

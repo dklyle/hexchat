@@ -540,6 +540,8 @@ typedef struct server
 	unsigned int skip_next_userhost:1;/* used for "get my ip from server" */
 	unsigned int skip_next_whois:1;	/* hide whois output */
 	unsigned int inside_whois:1;
+	unsigned int whois_popup:1;		/* show whois result in popup window */
+	struct whois_info *whois_info;	/* accumulated data for popup */
 	unsigned int doing_dns:1;			/* /dns has been done */
 	unsigned int end_of_motd:1;		/* end of motd reached (logged in) */
 	unsigned int sent_quit:1;			/* sent a QUIT already? */
@@ -574,6 +576,25 @@ typedef struct server
 	scram_session *scram_session; /* session for SASL SCRAM authentication */
 #endif
 } server;
+
+/* Accumulated WHOIS information for popup display */
+struct whois_info
+{
+	char nick[NICKLEN];
+	char *user;		/* username */
+	char *host;		/* hostname */
+	char *realname;
+	char *server_desc;	/* server info line */
+	char *channels;		/* channel list */
+	char *away_msg;
+	char *oper_info;	/* oper status or special info */
+	char *identified;	/* identified/registered info */
+	char *auth_account;	/* authenticated account name */
+	char *auth_msg;		/* auth message text */
+	char *idle_time;	/* formatted idle time */
+	char *signon_time;	/* formatted signon time */
+	GPtrArray *special_lines;	/* additional unknown WHOIS lines */
+};
 
 typedef int (*cmd_callback) (struct session * sess, char *tbuf, char *word[],
 									  char *word_eol[]);

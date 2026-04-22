@@ -314,6 +314,7 @@ is_hilight (char *from, char *text, session *sess, server *serv)
 		if (sess != current_tab)
 		{
 			sess->tab_state |= TAB_STATE_NEW_HILIGHT;
+			sess->msg_count++;
 			lastact_update (sess);
 		}
 		return 1;
@@ -372,7 +373,10 @@ inbound_action (session *sess, char *chan, char *from, char *ip, char *text,
 		if (fromme)
 			sess->tab_state |= TAB_STATE_NEW_DATA;
 		else
+		{
 			sess->tab_state |= TAB_STATE_NEW_MSG;
+			sess->msg_count++;
+		}
 		lastact_update (sess);
 	}
 
@@ -441,6 +445,7 @@ inbound_chanmsg (server *serv, session *sess, char *chan, char *from,
 	if (sess != current_tab)
 	{
 		sess->tab_state |= TAB_STATE_NEW_MSG;
+		sess->msg_count++;
 		lastact_update (sess);
 	}
 

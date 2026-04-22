@@ -3657,10 +3657,17 @@ fe_new_window (struct session *sess, int focus)
 		gtk_label_set_ellipsize (GTK_LABEL (gui->sidebar_label), PANGO_ELLIPSIZE_END);
 		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_label);
 
-		/* User count label (dimmed, right-aligned) */
+		/* User count icon + label (dimmed, right-aligned, hidden by default) */
+		gui->sidebar_usercount_icon = gtk_image_new_from_icon_name ("system-users-symbolic");
+		gtk_image_set_pixel_size (GTK_IMAGE (gui->sidebar_usercount_icon), 12);
+		gtk_widget_add_css_class (gui->sidebar_usercount_icon, "dim-label");
+		gtk_widget_set_visible (gui->sidebar_usercount_icon, FALSE);
+		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_usercount_icon);
+
 		gui->sidebar_usercount = gtk_label_new (NULL);
 		gtk_widget_add_css_class (gui->sidebar_usercount, "dim-label");
 		gtk_widget_add_css_class (gui->sidebar_usercount, "caption");
+		gtk_widget_set_visible (gui->sidebar_usercount, FALSE);
 		gtk_box_append (GTK_BOX (gui->sidebar_box), gui->sidebar_usercount);
 
 		/* Unread badge (hidden by default) */
@@ -4108,6 +4115,30 @@ fe_print_text (struct session *sess, char *text, time_t stamp,
 		                              1.0);   /* yalign - bottom */
 		gtk_text_buffer_delete_mark (gui->text_buffer, end_mark);
 	}
+
+	/* Update tab color / unread count for non-active tabs */
+	if (!no_activity && sess != current_tab)
+	{
+		/* Update unread badge from the core message counter */
+		if (sess->msg_count > 0 && gui->unread_count != sess->msg_count)
+		{
+			gui->unread_count = sess->msg_count;
+			if (gui->sidebar_unread)
+			{
+				char ubuf[32];
+				g_snprintf (ubuf, sizeof (ubuf), "%d", gui->unread_count);
+				gtk_label_set_text (GTK_LABEL (gui->sidebar_unread), ubuf);
+				gtk_widget_set_visible (gui->sidebar_unread, TRUE);
+			}
+		}
+
+		if (sess->tab_state & TAB_STATE_NEW_HILIGHT)
+			fe_set_tab_color (sess, FE_COLOR_NEW_HILIGHT);
+		else if (sess->tab_state & TAB_STATE_NEW_MSG)
+			fe_set_tab_color (sess, FE_COLOR_NEW_MSG);
+		else
+			fe_set_tab_color (sess, FE_COLOR_NEW_DATA);
+	}
 }
 
 void
@@ -4373,6 +4404,7 @@ fe_set_tab_color (struct session *sess, tabcolor col)
 	{
 	case 0: /* no particular color (theme default) */
 		sess->tab_state = TAB_STATE_NONE;
+		sess->msg_count = 0;
 		/* Clear unread count */
 		gui->unread_count = 0;
 		if (gui->sidebar_unread)
@@ -4405,28 +4437,10 @@ fe_set_tab_color (struct session *sess, tabcolor col)
 			/* Restore highlight class */
 			gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
 		}
-		/* Increment unread count for new messages */
-		gui->unread_count++;
-		if (gui->sidebar_unread)
-		{
-			char ubuf[32];
-			g_snprintf (ubuf, sizeof (ubuf), "%d", gui->unread_count);
-			gtk_label_set_text (GTK_LABEL (gui->sidebar_unread), ubuf);
-			gtk_widget_set_visible (gui->sidebar_unread, TRUE);
-		}
 		break;
 	case 3: /* your nick has been seen (highlight) */
 		sess->tab_state = TAB_STATE_NEW_HILIGHT;
 		gtk_widget_add_css_class (gui->sidebar_label, "hexchat-tab-hilight");
-		/* Increment unread count for highlights */
-		gui->unread_count++;
-		if (gui->sidebar_unread)
-		{
-			char ubuf[32];
-			g_snprintf (ubuf, sizeof (ubuf), "%d", gui->unread_count);
-			gtk_label_set_text (GTK_LABEL (gui->sidebar_unread), ubuf);
-			gtk_widget_set_visible (gui->sidebar_unread, TRUE);
-		}
 		break;
 	}
 
@@ -4773,11 +4787,15 @@ fe_userlist_numbers (struct session *sess)
 			g_snprintf (tbuf, sizeof (tbuf), "%d", sess->total);
 			gtk_label_set_text (GTK_LABEL (gui->sidebar_usercount), tbuf);
 			gtk_widget_set_visible (gui->sidebar_usercount, TRUE);
+			if (gui->sidebar_usercount_icon)
+				gtk_widget_set_visible (gui->sidebar_usercount_icon, TRUE);
 		}
 		else
 		{
 			gtk_label_set_text (GTK_LABEL (gui->sidebar_usercount), "");
 			gtk_widget_set_visible (gui->sidebar_usercount, FALSE);
+			if (gui->sidebar_usercount_icon)
+				gtk_widget_set_visible (gui->sidebar_usercount_icon, FALSE);
 		}
 	}
 

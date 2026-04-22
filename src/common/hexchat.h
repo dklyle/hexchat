@@ -406,6 +406,7 @@ typedef struct session
 	int done_away_check:1;	/* done checking for away status changes */
 	tab_state_flags tab_state;
 	tab_state_flags last_tab_state; /* before event is handled */
+	int msg_count;					/* count of messages received while tab inactive */
 	gtk_xtext_search_flags lastlog_flags;
 	void (*scrollback_replay_marklast) (struct session *sess);
 } session;

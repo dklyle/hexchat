@@ -35,6 +35,7 @@ typedef struct session_gui
 	GtkWidget *sidebar_box;            /* GtkBox inside the sidebar row */
 	GtkWidget *sidebar_label;          /* GtkLabel inside the sidebar row */
 	GtkWidget *sidebar_usercount;      /* GtkLabel: user count in sidebar */
+	GtkWidget *sidebar_usercount_icon; /* GtkImage: person icon for user count */
 	GtkWidget *sidebar_unread;         /* GtkLabel: unread message badge */
 	int unread_count;                  /* Number of unread messages */
 	GtkWidget *content_box;            /* top-level box for this session's content */

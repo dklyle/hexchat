@@ -45,14 +45,21 @@
 #include "../common/server.h"
 #include "../common/url.h"
 #include "../common/text.h"
+#include "../common/servlist.h"
 
 #include "fe-gtk4.h"
 
 /* Global application state */
 AdwApplication *hexchat_app = NULL;
 GtkWidget *main_window = NULL;
-GtkWidget *channel_sidebar = NULL;     /* GtkListBox for channel/chat list */
+GtkWidget *channel_sidebar = NULL;     /* GtkBox for channel/chat tree */
 GtkWidget *content_stack = NULL;       /* GtkStack for session content */
+static GtkWidget *window_title_widget = NULL; /* AdwWindowTitle in header bar */
+static GtkWidget *selected_sidebar_row = NULL; /* currently selected GtkListBoxRow */
+static GtkListBox *selected_sidebar_list = NULL; /* GtkListBox owning selected row */
+
+/* Forward declarations */
+static void sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data);
 
 static gboolean done = FALSE;
 static gboolean notifications_enabled = TRUE;
@@ -675,6 +682,10 @@ palette_update_css (void)
 		"  font-size: 0.75em;"
 		"  font-weight: bold;"
 		"  min-width: 1em;"
+		"}"
+		".hexchat-server-header {"
+		"  font-weight: bold;"
+		"  opacity: 0.7;"
 		"}",
 		get_color (COL_FG), get_color (COL_BG),
 		get_color (COL_FG), get_color (COL_BG),
@@ -1020,6 +1031,183 @@ create_app_menu (void)
 /* Track previously selected session for marker line handling */
 static session *prev_selected_sess = NULL;
 
+/* ===== Collapsible server group helpers ===== */
+
+/* Toggle collapse state of a server group when its header is clicked */
+static void
+server_header_click_cb (GtkGestureClick *gesture, int n_press, double x, double y,
+                        gpointer user_data)
+{
+	struct server *serv = user_data;
+	server_gui *sgui;
+
+	if (!serv || !serv->gui)
+		return;
+
+	sgui = serv->gui;
+	sgui->sidebar_collapsed = !sgui->sidebar_collapsed;
+
+	if (sgui->sidebar_child_list)
+		gtk_widget_set_visible (sgui->sidebar_child_list, !sgui->sidebar_collapsed);
+
+	if (sgui->sidebar_arrow)
+	{
+		/* Rotate arrow: right (collapsed) or down (expanded) */
+		if (sgui->sidebar_collapsed)
+			gtk_image_set_from_icon_name (GTK_IMAGE (sgui->sidebar_arrow),
+			                              "go-next-symbolic");
+		else
+			gtk_image_set_from_icon_name (GTK_IMAGE (sgui->sidebar_arrow),
+			                              "go-down-symbolic");
+	}
+}
+
+/* Select row helper: selects a row in its parent listbox and deselects
+ * any row in the previously selected listbox */
+static void
+sidebar_select_row (GtkWidget *row)
+{
+	GtkWidget *parent;
+	GtkListBox *listbox;
+
+	if (!row)
+		return;
+
+	parent = gtk_widget_get_parent (row);
+	if (!parent || !GTK_IS_LIST_BOX (parent))
+		return;
+
+	listbox = GTK_LIST_BOX (parent);
+
+	/* Deselect in the previously selected listbox if different */
+	if (selected_sidebar_list && selected_sidebar_list != listbox)
+	{
+		g_signal_handlers_block_matched (selected_sidebar_list,
+		                                 G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+		                                 sidebar_row_selected_cb, NULL);
+		gtk_list_box_unselect_all (selected_sidebar_list);
+		g_signal_handlers_unblock_matched (selected_sidebar_list,
+		                                   G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+		                                   sidebar_row_selected_cb, NULL);
+	}
+
+	selected_sidebar_list = listbox;
+	selected_sidebar_row = row;
+	gtk_list_box_select_row (listbox, GTK_LIST_BOX_ROW (row));
+}
+
+/* Get or create the sidebar group (header + child listbox) for a server.
+ * The group is a vertical GtkBox appended to channel_sidebar (also a GtkBox).
+ * Layout:
+ *   sidebar_group (GtkBox vertical)
+ *     sidebar_header (GtkBox horizontal) - clickable
+ *       sidebar_arrow (GtkImage) - expand/collapse indicator
+ *       sidebar_server_label (GtkLabel) - network/server name
+ *     sidebar_child_list (GtkListBox) - child session rows
+ */
+static server_gui *
+get_or_create_server_group (struct server *serv)
+{
+	server_gui *sgui;
+	GtkGesture *click;
+	const char *network_name;
+
+	g_return_val_if_fail (serv != NULL, NULL);
+	g_return_val_if_fail (serv->gui != NULL, NULL);
+
+	sgui = serv->gui;
+
+	/* Already created? */
+	if (sgui->sidebar_group)
+		return sgui;
+
+	/* Determine display name */
+	if (serv->network && ((ircnet *)serv->network)->name && ((ircnet *)serv->network)->name[0])
+		network_name = ((ircnet *)serv->network)->name;
+	else if (serv->servername[0])
+		network_name = serv->servername;
+	else
+		network_name = _("New Server");
+
+	/* Create group container */
+	sgui->sidebar_group = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+
+	/* Create header row */
+	sgui->sidebar_header = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+	gtk_widget_set_margin_start (sgui->sidebar_header, 4);
+	gtk_widget_set_margin_end (sgui->sidebar_header, 4);
+	gtk_widget_set_margin_top (sgui->sidebar_header, 6);
+	gtk_widget_set_margin_bottom (sgui->sidebar_header, 2);
+	gtk_widget_add_css_class (sgui->sidebar_header, "hexchat-server-header");
+	gtk_widget_set_cursor_from_name (sgui->sidebar_header, "pointer");
+
+	sgui->sidebar_arrow = gtk_image_new_from_icon_name ("go-down-symbolic");
+	gtk_image_set_pixel_size (GTK_IMAGE (sgui->sidebar_arrow), 12);
+	gtk_widget_add_css_class (sgui->sidebar_arrow, "dim-label");
+	gtk_box_append (GTK_BOX (sgui->sidebar_header), sgui->sidebar_arrow);
+
+	sgui->sidebar_server_label = gtk_label_new (network_name);
+	gtk_label_set_xalign (GTK_LABEL (sgui->sidebar_server_label), 0.0);
+	gtk_widget_set_hexpand (sgui->sidebar_server_label, TRUE);
+	gtk_label_set_ellipsize (GTK_LABEL (sgui->sidebar_server_label), PANGO_ELLIPSIZE_END);
+	gtk_widget_add_css_class (sgui->sidebar_server_label, "heading");
+	gtk_widget_add_css_class (sgui->sidebar_server_label, "caption");
+	gtk_box_append (GTK_BOX (sgui->sidebar_header), sgui->sidebar_server_label);
+
+	/* Click handler on header */
+	click = gtk_gesture_click_new ();
+	g_signal_connect (click, "pressed",
+	                  G_CALLBACK (server_header_click_cb), serv);
+	gtk_widget_add_controller (sgui->sidebar_header, GTK_EVENT_CONTROLLER (click));
+
+	gtk_box_append (GTK_BOX (sgui->sidebar_group), sgui->sidebar_header);
+
+	/* Create child listbox */
+	sgui->sidebar_child_list = gtk_list_box_new ();
+	gtk_list_box_set_selection_mode (GTK_LIST_BOX (sgui->sidebar_child_list),
+	                                 GTK_SELECTION_SINGLE);
+	g_signal_connect (sgui->sidebar_child_list, "row-selected",
+	                  G_CALLBACK (sidebar_row_selected_cb), NULL);
+	gtk_box_append (GTK_BOX (sgui->sidebar_group), sgui->sidebar_child_list);
+
+	sgui->sidebar_collapsed = FALSE;
+
+	/* Append group to the main channel_sidebar box */
+	gtk_box_append (GTK_BOX (channel_sidebar), sgui->sidebar_group);
+
+	return sgui;
+}
+
+/* Remove a server group from the sidebar if it has no more children */
+static void
+maybe_remove_server_group (struct server *serv)
+{
+	server_gui *sgui;
+	GtkWidget *child;
+
+	if (!serv || !serv->gui)
+		return;
+
+	sgui = serv->gui;
+	if (!sgui->sidebar_child_list || !sgui->sidebar_group)
+		return;
+
+	/* Check if the listbox has any children left */
+	child = gtk_widget_get_first_child (sgui->sidebar_child_list);
+	if (child)
+		return; /* Still has rows */
+
+	/* Remove the whole group from channel_sidebar */
+	if (channel_sidebar)
+		gtk_box_remove (GTK_BOX (channel_sidebar), sgui->sidebar_group);
+
+	sgui->sidebar_group = NULL;
+	sgui->sidebar_header = NULL;
+	sgui->sidebar_arrow = NULL;
+	sgui->sidebar_server_label = NULL;
+	sgui->sidebar_child_list = NULL;
+}
+
 /* Get session from a sidebar row */
 static session *
 get_session_from_row (GtkListBoxRow *row)
@@ -1119,13 +1307,31 @@ sidebar_row_right_click_cb (GtkGestureClick *gesture, int n_press,
 	gtk_popover_popup (GTK_POPOVER (popover));
 }
 
-/* Callback when sidebar selection changes */
+/* Callback when sidebar selection changes in a child GtkListBox */
 static void
 sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_data)
 {
 	session *new_sess;
 
+	if (!row)
+		return;
+
 	new_sess = get_session_from_row (row);
+
+	/* Deselect in the previously selected listbox if it's different */
+	if (selected_sidebar_list && selected_sidebar_list != listbox)
+	{
+		g_signal_handlers_block_matched (selected_sidebar_list,
+		                                 G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+		                                 sidebar_row_selected_cb, NULL);
+		gtk_list_box_unselect_all (selected_sidebar_list);
+		g_signal_handlers_unblock_matched (selected_sidebar_list,
+		                                   G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+		                                   sidebar_row_selected_cb, NULL);
+	}
+
+	selected_sidebar_row = GTK_WIDGET (row);
+	selected_sidebar_list = listbox;
 
 	/* Set marker on the previous session before switching */
 	if (prev_selected_sess && prev_selected_sess != new_sess)
@@ -1247,8 +1453,8 @@ create_main_window (void)
 
 	/* Create header bar */
 	GtkWidget *header = adw_header_bar_new ();
-	GtkWidget *title = adw_window_title_new (PACKAGE_NAME, "");
-	adw_header_bar_set_title_widget (ADW_HEADER_BAR (header), title);
+	window_title_widget = adw_window_title_new (PACKAGE_NAME, "");
+	adw_header_bar_set_title_widget (ADW_HEADER_BAR (header), window_title_widget);
 	adw_toolbar_view_add_top_bar (ADW_TOOLBAR_VIEW (toolbar_view), header);
 
 	/* Create hamburger menu button */
@@ -1270,11 +1476,7 @@ create_main_window (void)
 	                                GTK_POLICY_AUTOMATIC);
 	gtk_widget_set_size_request (sidebar_scroll, 160, -1);
 
-	channel_sidebar = gtk_list_box_new ();
-	gtk_list_box_set_selection_mode (GTK_LIST_BOX (channel_sidebar),
-	                                 GTK_SELECTION_SINGLE);
-	g_signal_connect (channel_sidebar, "row-selected",
-	                  G_CALLBACK (sidebar_row_selected_cb), NULL);
+	channel_sidebar = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
 	gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (sidebar_scroll),
 	                               channel_sidebar);
 
@@ -3520,7 +3722,8 @@ fe_new_window (struct session *sess, int focus)
 	gui->nick_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
 
 	/* Nick button (flat button showing current nick) */
-	gui->nick_label = gtk_button_new_with_label ("");
+	gui->nick_label = gtk_button_new_with_label (
+		(sess->server && sess->server->nick[0]) ? sess->server->nick : "");
 	gtk_widget_add_css_class (gui->nick_label, "flat");
 	gtk_widget_add_css_class (gui->nick_label, "hexchat-nick");
 	g_signal_connect (gui->nick_label, "clicked",
@@ -3694,13 +3897,19 @@ fe_new_window (struct session *sess, int focus)
 			                           GTK_EVENT_CONTROLLER (click));
 		}
 
-		gtk_list_box_append (GTK_LIST_BOX (channel_sidebar), gui->sidebar_row);
+		/* Add to the server's sidebar group */
+		{
+			server_gui *sgui = get_or_create_server_group (sess->server);
+			if (sgui && sgui->sidebar_child_list)
+			{
+				gtk_list_box_append (GTK_LIST_BOX (sgui->sidebar_child_list),
+				                     gui->sidebar_row);
+			}
+		}
 
 		if (focus)
-			gtk_list_box_select_row (GTK_LIST_BOX (channel_sidebar),
-			                         GTK_LIST_BOX_ROW (gui->sidebar_row));
+			sidebar_select_row (gui->sidebar_row);
 	}
-
 	/* Set up server relationships */
 	current_sess = sess;
 	if (!sess->server->front_session)
@@ -3727,9 +3936,14 @@ fe_close_window (struct session *sess)
 		/* Only manipulate GTK widgets if we're not quitting */
 		if (!hexchat_is_quitting)
 		{
-			if (gui->sidebar_row && channel_sidebar)
-				gtk_list_box_remove (GTK_LIST_BOX (channel_sidebar),
-				                     gui->sidebar_row);
+			if (gui->sidebar_row && sess->server && sess->server->gui)
+			{
+				server_gui *sgui = sess->server->gui;
+				if (sgui->sidebar_child_list)
+					gtk_list_box_remove (GTK_LIST_BOX (sgui->sidebar_child_list),
+					                     gui->sidebar_row);
+				maybe_remove_server_group (sess->server);
+			}
 			if (gui->content_box && content_stack)
 				gtk_stack_remove (GTK_STACK (content_stack), gui->content_box);
 		}
@@ -4267,6 +4481,26 @@ fe_set_channel (struct session *sess)
 
 		gtk_label_set_text (GTK_LABEL (gui->sidebar_label), tab_title);
 	}
+
+	/* Update server group header if network name changed */
+	if (sess->server && sess->server->gui)
+	{
+		server_gui *sgui = sess->server->gui;
+		if (sgui->sidebar_server_label)
+		{
+			const char *network_name = NULL;
+			if (sess->server->network)
+			{
+				ircnet *net = sess->server->network;
+				if (net->name && net->name[0])
+					network_name = net->name;
+			}
+			if (!network_name && sess->server->servername[0])
+				network_name = sess->server->servername;
+			if (network_name)
+				gtk_label_set_text (GTK_LABEL (sgui->sidebar_server_label), network_name);
+		}
+	}
 }
 
 void
@@ -4274,6 +4508,7 @@ fe_set_title (struct session *sess)
 {
 	char tbuf[512];
 	int type;
+	const char *network;
 
 	if (!sess || !sess->server)
 		return;
@@ -4283,33 +4518,40 @@ fe_set_title (struct session *sess)
 		return;
 
 	type = sess->type;
+	network = server_get_network (sess->server, TRUE);
 
 	if (sess->server->connected == FALSE && type != SESS_DIALOG)
 	{
-		gtk_window_set_title (GTK_WINDOW (main_window), _(DISPLAY_NAME));
+		/* Show session name even when disconnected */
+		if (sess->channel[0] && g_utf8_validate (sess->channel, -1, NULL))
+			g_snprintf (tbuf, sizeof (tbuf), "%s (disconnected) - %s",
+			            sess->channel, _(DISPLAY_NAME));
+		else if (network && network[0])
+			g_snprintf (tbuf, sizeof (tbuf), "%s (disconnected) - %s",
+			            network, _(DISPLAY_NAME));
+		else
+			g_snprintf (tbuf, sizeof (tbuf), "%s", _(DISPLAY_NAME));
+		gtk_window_set_title (GTK_WINDOW (main_window), tbuf);
+		if (window_title_widget)
+			adw_window_title_set_title (ADW_WINDOW_TITLE (window_title_widget), tbuf);
 		return;
 	}
 
 	switch (type)
 	{
 	case SESS_DIALOG:
-		g_snprintf (tbuf, sizeof (tbuf), "%s %s @ %s - %s",
+		g_snprintf (tbuf, sizeof (tbuf), "%s %s - %s",
 		            _("Dialog with"), sess->channel,
-		            server_get_network (sess->server, TRUE),
 		            _(DISPLAY_NAME));
 		break;
 	case SESS_SERVER:
-		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s - %s",
-		            prefs.hex_gui_win_nick ? sess->server->nick : "",
-		            prefs.hex_gui_win_nick ? " @ " : "",
-		            server_get_network (sess->server, TRUE),
+		g_snprintf (tbuf, sizeof (tbuf), "%s - %s",
+		            network,
 		            _(DISPLAY_NAME));
 		break;
 	case SESS_CHANNEL:
-		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s / %s%s%s%s - %s",
-		            prefs.hex_gui_win_nick ? sess->server->nick : "",
-		            prefs.hex_gui_win_nick ? " @ " : "",
-		            server_get_network (sess->server, TRUE),
+		g_snprintf (tbuf, sizeof (tbuf), "%s / %s%s%s%s - %s",
+		            network,
 		            sess->channel,
 		            prefs.hex_gui_win_modes && sess->current_modes ? " (" : "",
 		            prefs.hex_gui_win_modes && sess->current_modes ? sess->current_modes : "",
@@ -4322,10 +4564,8 @@ fe_set_title (struct session *sess)
 		break;
 	case SESS_NOTICES:
 	case SESS_SNOTICES:
-		g_snprintf (tbuf, sizeof (tbuf), "%s%s%s (notices) - %s",
-		            prefs.hex_gui_win_nick ? sess->server->nick : "",
-		            prefs.hex_gui_win_nick ? " @ " : "",
-		            server_get_network (sess->server, TRUE),
+		g_snprintf (tbuf, sizeof (tbuf), "%s (notices) - %s",
+		            network,
 		            _(DISPLAY_NAME));
 		break;
 	default:
@@ -4334,7 +4574,11 @@ fe_set_title (struct session *sess)
 	}
 
 	if (main_window)
+	{
 		gtk_window_set_title (GTK_WINDOW (main_window), tbuf);
+		if (window_title_widget)
+			adw_window_title_set_title (ADW_WINDOW_TITLE (window_title_widget), tbuf);
+	}
 }
 
 void
@@ -5611,8 +5855,7 @@ fe_ctrl_gui (session *sess, fe_gui_action action, int arg)
 			if (sess->server)
 				sess->server->front_session = sess;
 			if (gui->sidebar_row && channel_sidebar)
-				gtk_list_box_select_row (GTK_LIST_BOX (channel_sidebar),
-				                         GTK_LIST_BOX_ROW (gui->sidebar_row));
+				sidebar_select_row (gui->sidebar_row);
 		}
 		break;
 	case FE_GUI_SHOW:

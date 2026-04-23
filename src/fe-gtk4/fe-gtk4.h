@@ -76,6 +76,14 @@ typedef struct session_gui
 /* GUI data attached to each server */
 typedef struct server_gui
 {
+	/* Sidebar tree group */
+	GtkWidget *sidebar_group;          /* GtkBox containing header + child list */
+	GtkWidget *sidebar_header;         /* GtkBox: clickable server header row */
+	GtkWidget *sidebar_arrow;          /* GtkImage: expand/collapse arrow */
+	GtkWidget *sidebar_server_label;   /* GtkLabel: server/network name */
+	GtkWidget *sidebar_child_list;     /* GtkListBox: child session rows */
+	gboolean sidebar_collapsed;        /* Whether child list is hidden */
+
 	/* Channel list window */
 	GtkWidget *chanlist_window;        /* AdwWindow for channel list */
 	GtkWidget *chanlist_view;          /* GtkColumnView for channel list */

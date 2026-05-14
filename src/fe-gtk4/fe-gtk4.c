@@ -78,6 +78,34 @@ static void show_notification (const char *title, const char *body);
 static void topic_activate_cb (GtkEntry *entry, gpointer user_data);
 static void nick_button_clicked_cb (GtkButton *button, gpointer user_data);
 
+/* Idle callback to scroll a text view to the bottom.
+ * Used when switching tabs, because the text view may not have valid
+ * allocation yet when gtk_stack_set_visible_child is called. */
+static gboolean
+scroll_to_bottom_idle_cb (gpointer user_data)
+{
+	session *sess = user_data;
+	session_gui *gui;
+	GtkTextMark *mark;
+
+	if (!is_session (sess) || !sess->gui)
+		return G_SOURCE_REMOVE;
+
+	gui = sess->gui;
+	if (!gui->text_view || !gui->text_buffer)
+		return G_SOURCE_REMOVE;
+
+	mark = gtk_text_buffer_get_mark (gui->text_buffer, "scroll-on-switch");
+	if (mark)
+	{
+		gtk_text_view_scroll_to_mark (GTK_TEXT_VIEW (gui->text_view), mark,
+		                              0.0, TRUE, 0.0, 1.0);
+		gtk_text_buffer_delete_mark (gui->text_buffer, mark);
+	}
+
+	return G_SOURCE_REMOVE;
+}
+
 /* Forward declarations for search bar */
 static void search_toggle (session *sess);
 static void search_do (session *sess, gboolean backward);
@@ -959,7 +987,7 @@ static void
 action_about (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
 	AdwDialog *about;
-	
+
 	about = adw_about_dialog_new ();
 	adw_about_dialog_set_application_name (ADW_ABOUT_DIALOG (about), PACKAGE_NAME);
 	adw_about_dialog_set_version (ADW_ABOUT_DIALOG (about), PACKAGE_VERSION);
@@ -968,6 +996,20 @@ action_about (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 	adw_about_dialog_set_license_type (ADW_ABOUT_DIALOG (about), GTK_LICENSE_GPL_2_0);
 	
 	adw_dialog_present (about, main_window);
+}
+
+static void
+action_toggle_away (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+	GVariant *state;
+	gboolean is_away;
+
+	state = g_action_get_state (G_ACTION (action));
+	is_away = g_variant_get_boolean (state);
+	g_variant_unref (state);
+
+	if (current_sess)
+		handle_command (current_sess, is_away ? "back" : "away", FALSE);
 }
 
 static const GActionEntry app_actions[] = {
@@ -1001,6 +1043,7 @@ create_app_menu (void)
 	section = g_menu_new ();
 	g_menu_append (section, "Disconnect", "app.disconnect");
 	g_menu_append (section, "Reconnect", "app.reconnect");
+	g_menu_append (section, "Marked Away", "app.toggle-away");
 	g_menu_append (section, "Channel List...", "app.channel-list");
 	g_menu_append_section (menu, "Server", G_MENU_MODEL (section));
 	g_object_unref (section);
@@ -1229,80 +1272,85 @@ get_session_from_row (GtkListBoxRow *row)
 
 /* ===== Sidebar right-click context menu ===== */
 
-/* Close/leave action triggered from the sidebar context menu.
- * The target session pointer is stored on the popover via g_object_set_data. */
+/* Close button clicked inside the sidebar context popover.
+ * The session pointer is stored on the button via g_object_set_data.
+ * We hide the popover first, then close the session directly. */
 static void
-sidebar_context_close_cb (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+sidebar_close_button_cb (GtkButton *button, gpointer user_data)
 {
-	GtkPopover *popover = GTK_POPOVER (user_data);
+	GtkWidget *popover = GTK_WIDGET (user_data);
 	session *sess;
+	gulong handler_id;
 
-	sess = g_object_get_data (G_OBJECT (popover), "hexchat-session");
-	if (sess)
+	sess = g_object_get_data (G_OBJECT (button), "hexchat-session");
+	if (!sess)
+		return;
+
+	/* Disconnect the "closed" signal handler BEFORE hiding, so that
+	 * gtk_widget_set_visible(FALSE) won't trigger a second unparent. */
+	handler_id = GPOINTER_TO_UINT (
+		g_object_get_data (G_OBJECT (popover), "closed-handler-id"));
+	if (handler_id)
+		g_signal_handler_disconnect (popover, handler_id);
+
+	gtk_widget_set_visible (popover, FALSE);
+	gtk_widget_unparent (popover);
+
+	if (is_session (sess))
 		fe_close_window (sess);
 }
 
 /* Right-click handler for sidebar rows.
- * Creates a GtkPopoverMenu with a "Close" item anchored to the click point. */
+ * Creates a simple GtkPopover with a close button. */
 static void
 sidebar_row_right_click_cb (GtkGestureClick *gesture, int n_press,
                             double x, double y, gpointer user_data)
 {
 	GtkWidget *row = GTK_WIDGET (user_data);
 	session *sess;
-	GMenu *menu;
-	GMenu *section;
 	GtkWidget *popover;
-	GSimpleActionGroup *group;
-	GSimpleAction *close_action;
+	GtkWidget *button;
 	GdkRectangle rect;
+	const char *label;
 
 	sess = get_session_from_row (GTK_LIST_BOX_ROW (row));
 	if (!sess)
 		return;
 
-	/* Build the menu model */
-	menu = g_menu_new ();
-	section = g_menu_new ();
-
+	/* Pick the label based on session type */
 	if (sess->type == SESS_CHANNEL)
-		g_menu_append (section, _("Leave Channel"), "ctx.close-tab");
+		label = _("Leave Channel");
 	else if (sess->type == SESS_DIALOG)
-		g_menu_append (section, _("Close Dialog"), "ctx.close-tab");
+		label = _("Close Dialog");
 	else
-		g_menu_append (section, _("Close"), "ctx.close-tab");
+		label = _("Close");
 
-	g_menu_append_section (menu, NULL, G_MENU_MODEL (section));
-	g_object_unref (section);
-
-	/* Create the popover */
-	popover = gtk_popover_menu_new_from_model (G_MENU_MODEL (menu));
-	g_object_unref (menu);
+	/* Create a simple popover with a single button */
+	popover = gtk_popover_new ();
 	gtk_widget_set_parent (popover, row);
 
-	/* Position at the click point */
 	rect.x = (int)x;
 	rect.y = (int)y;
 	rect.width = 1;
 	rect.height = 1;
 	gtk_popover_set_pointing_to (GTK_POPOVER (popover), &rect);
 
-	/* Stash the session on the popover so the action callback can find it */
-	g_object_set_data (G_OBJECT (popover), "hexchat-session", sess);
+	button = gtk_button_new_with_label (label);
+	gtk_widget_add_css_class (button, "flat");
+	g_object_set_data (G_OBJECT (button), "hexchat-session", sess);
+	g_signal_connect (button, "clicked",
+	                  G_CALLBACK (sidebar_close_button_cb), popover);
+	gtk_popover_set_child (GTK_POPOVER (popover), button);
 
-	/* Create a local action group scoped to this popover */
-	group = g_simple_action_group_new ();
-	close_action = g_simple_action_new ("close-tab", NULL);
-	g_signal_connect (close_action, "activate",
-	                  G_CALLBACK (sidebar_context_close_cb), popover);
-	g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (close_action));
-	g_object_unref (close_action);
-	gtk_widget_insert_action_group (popover, "ctx", G_ACTION_GROUP (group));
-	g_object_unref (group);
-
-	/* Clean up the popover when it is closed */
-	g_signal_connect (popover, "closed",
-	                  G_CALLBACK (gtk_widget_unparent), NULL);
+	/* Clean up the popover if dismissed without clicking close.
+	 * Store the handler ID so sidebar_close_button_cb can disconnect it. */
+	{
+		gulong hid;
+		hid = g_signal_connect (popover, "closed",
+		                        G_CALLBACK (gtk_widget_unparent), NULL);
+		g_object_set_data (G_OBJECT (popover), "closed-handler-id",
+		                   GUINT_TO_POINTER ((guint)hid));
+	}
 
 	gtk_popover_popup (GTK_POPOVER (popover));
 }
@@ -1360,20 +1408,56 @@ sidebar_row_selected_cb (GtkListBox *listbox, GtkListBoxRow *row, gpointer user_
 		/* Update window title for the new session */
 		fe_set_title (new_sess);
 
+		/* Update header subtitle for away status */
+		if (window_title_widget && new_sess->server)
+		{
+			if (new_sess->server->is_away)
+			{
+				if (new_sess->server->last_away_reason)
+				{
+					char *subtitle = g_strdup_printf (_("Away: %s"),
+					                                  new_sess->server->last_away_reason);
+					adw_window_title_set_subtitle (
+						ADW_WINDOW_TITLE (window_title_widget), subtitle);
+					g_free (subtitle);
+				}
+				else
+					adw_window_title_set_subtitle (
+						ADW_WINDOW_TITLE (window_title_widget), _("Away"));
+			}
+			else
+				adw_window_title_set_subtitle (
+					ADW_WINDOW_TITLE (window_title_widget), "");
+		}
+
 		/* Clear tab color since the user is now viewing this tab */
 		fe_set_tab_color (new_sess, 0);
 
-		/* Scroll text view to the end so the user sees the latest messages */
+		/* Scroll text view to the end so the user sees the latest messages.
+		 * We must defer this because the GtkStack just switched the visible
+		 * child and the text view hasn't been allocated yet. */
 		if (gui->text_view && gui->text_buffer)
 		{
 			GtkTextIter end_iter;
 			GtkTextMark *end_mark;
 
 			gtk_text_buffer_get_end_iter (gui->text_buffer, &end_iter);
-			end_mark = gtk_text_buffer_create_mark (gui->text_buffer, NULL, &end_iter, FALSE);
-			gtk_text_view_scroll_to_mark (GTK_TEXT_VIEW (gui->text_view), end_mark,
-			                              0.0, TRUE, 0.0, 1.0);
-			gtk_text_buffer_delete_mark (gui->text_buffer, end_mark);
+
+			/* Create a persistent mark named "scroll-on-switch" so the
+			 * idle callback can find it even if more text arrives. */
+			end_mark = gtk_text_buffer_get_mark (gui->text_buffer, "scroll-on-switch");
+			if (end_mark)
+				gtk_text_buffer_move_mark (gui->text_buffer, end_mark, &end_iter);
+			else
+				end_mark = gtk_text_buffer_create_mark (gui->text_buffer,
+				                                        "scroll-on-switch",
+				                                        &end_iter, FALSE);
+
+			/* Schedule the actual scroll for after layout is done.
+			 * Use LOW priority so it runs after GTK's layout (HIGH) and
+			 * resize (DEFAULT) processing. */
+			g_idle_add_full (G_PRIORITY_LOW, scroll_to_bottom_idle_cb,
+			                 new_sess, NULL);
 		}
 
 		/* Focus the input entry */
@@ -1438,6 +1522,18 @@ create_main_window (void)
 	g_action_map_add_action_entries (G_ACTION_MAP (hexchat_app),
 	                                 app_actions, G_N_ELEMENTS (app_actions),
 	                                 NULL);
+
+	/* Add stateful "toggle-away" action (boolean toggle) */
+	{
+		GSimpleAction *away_action;
+		away_action = g_simple_action_new_stateful ("toggle-away", NULL,
+		                                            g_variant_new_boolean (FALSE));
+		g_signal_connect (away_action, "activate",
+		                  G_CALLBACK (action_toggle_away), NULL);
+		g_action_map_add_action (G_ACTION_MAP (hexchat_app),
+		                         G_ACTION (away_action));
+		g_object_unref (away_action);
+	}
 
 	/* Create main window */
 	main_window = adw_application_window_new (GTK_APPLICATION (hexchat_app));
@@ -3977,6 +4073,22 @@ fe_close_window (struct session *sess)
 	}
 
 	session_free (sess);
+
+	/* After session_free, current_sess is updated.
+	 * Select the new current session's sidebar row so the user sees it. */
+	if (!hexchat_is_quitting && current_sess && current_sess->gui)
+	{
+		session_gui *new_gui = current_sess->gui;
+		if (new_gui->sidebar_row && current_sess->server &&
+		    current_sess->server->gui)
+		{
+			server_gui *sgui = current_sess->server->gui;
+			if (sgui->sidebar_child_list)
+				gtk_list_box_select_row (
+					GTK_LIST_BOX (sgui->sidebar_child_list),
+					GTK_LIST_BOX_ROW (new_gui->sidebar_row));
+		}
+	}
 }
 
 void
@@ -5196,11 +5308,56 @@ fe_set_away (server *serv)
 		if (sess->server == serv && sess->gui && sess->gui->nick_label)
 		{
 			if (serv->is_away)
+			{
 				gtk_widget_add_css_class (sess->gui->nick_label, "hexchat-nick-away");
+
+				/* Show away reason as tooltip on the nick button */
+				if (serv->last_away_reason)
+					gtk_widget_set_tooltip_text (sess->gui->nick_label,
+					                             serv->last_away_reason);
+				else
+					gtk_widget_set_tooltip_text (sess->gui->nick_label,
+					                             _("Away"));
+			}
 			else
+			{
 				gtk_widget_remove_css_class (sess->gui->nick_label, "hexchat-nick-away");
+				gtk_widget_set_tooltip_text (sess->gui->nick_label, NULL);
+			}
 		}
 		list = list->next;
+	}
+
+	/* Update the header bar subtitle to reflect away status */
+	if (window_title_widget && current_sess && current_sess->server == serv)
+	{
+		if (serv->is_away)
+		{
+			if (serv->last_away_reason)
+			{
+				char *subtitle = g_strdup_printf (_("Away: %s"),
+				                                  serv->last_away_reason);
+				adw_window_title_set_subtitle (ADW_WINDOW_TITLE (window_title_widget),
+				                               subtitle);
+				g_free (subtitle);
+			}
+			else
+				adw_window_title_set_subtitle (ADW_WINDOW_TITLE (window_title_widget),
+				                               _("Away"));
+		}
+		else
+			adw_window_title_set_subtitle (ADW_WINDOW_TITLE (window_title_widget), "");
+	}
+
+	/* Sync the "Marked Away" toggle action state */
+	if (hexchat_app && current_sess && current_sess->server == serv)
+	{
+		GAction *away_action;
+		away_action = g_action_map_lookup_action (G_ACTION_MAP (hexchat_app),
+		                                          "toggle-away");
+		if (away_action)
+			g_simple_action_set_state (G_SIMPLE_ACTION (away_action),
+			                           g_variant_new_boolean (serv->is_away));
 	}
 }
 
